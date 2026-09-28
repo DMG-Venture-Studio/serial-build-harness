@@ -1,0 +1,42 @@
+# Roadmap
+
+Role: pending gates only, grouped under stage headings, in order. Each gate carries the same
+sections: Builds (what it produces), Demo (the scripted scenario {{owner_name}} runs and what they
+should see, ending with a Break it: step where they try to break it), Depends on (the gates that
+must ship first), Decided (constraints it honours, each naming its decision record by slug),
+Decide by proof (options, what is measured, the criterion; each outcome becomes a dated decision
+record naming the rejected option; numeric thresholds are proposals until the gate is planned),
+Open (unresolved questions by slug, with a recommendation where one exists), QA (mechanical
+checks, which become the proof commands when the gate ships), Tried to break (the attacks the red
+lane must at least attempt: inputs, orders, neighbours, and limits meant to make it fail), and
+Acceptance (what {{owner_name}} does on the running product and the sentence they can then say).
+No estimates, no status. A stage may end with a list opening "Later:", naming gates in one line
+each, in order, not yet written out; intake writes the next one out in full, with every section,
+before it is planned. A gate is done only when {{owner_name}} has run its demo; a report, a test, or a green
+check never accepts a gate. Rationale lives in the decision records a gate names, never here.
+
+## Stage: {{first_stage}}
+
+Goal: {{first_stage_goal}}
+
+### {{first_gate_slug}}
+
+Builds: {{first_gate_builds}}
+
+Demo: {{first_gate_demo}}
+
+Depends on: {{first_gate_depends}}
+
+Decided: {{first_gate_decided}}
+
+Decide by proof: {{first_gate_decide_by_proof}}
+
+Open: {{first_gate_open}}
+
+QA: {{first_gate_qa}}
+
+Tried to break: {{first_gate_tried_to_break}}
+
+Acceptance: {{first_gate_acceptance}}
+
+{{later_gates}}

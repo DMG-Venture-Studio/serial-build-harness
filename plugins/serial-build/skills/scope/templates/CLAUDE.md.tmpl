@@ -1,0 +1,40 @@
+<!-- serial-build -->
+# {{project_name}}
+
+{{what_it_is}}
+
+How this project is built, gate by gate, and how to write to {{owner_name}}, spend money, and keep
+systems decoupled: `.claude/rules/serial-build.md`, which always loads.
+
+## Floors
+
+{{floors}}
+
+## Where things live
+
+| Path | Holds |
+|---|---|
+{{roots_table}}
+| `docs/` | The records below |
+| `.claude/` | Rules scoped by path, and `serial-build.json`: the owner's name, the generated files, the checks the hooks run, and the test paths the red lane may write |
+| `{{inbox}}/` | An inbox other sessions drop files into; never committed, emptied by whoever reads it |
+
+| Doc | Holds |
+|---|---|
+| `docs/design.md` | What the product is, who it is for, what they do today, and what it is not. Current state only |
+| `docs/tech/architecture.md` | Why the code is as it is, by stack; generated files and local gates under toolchain |
+| `docs/glossary.md` | The only place a term is defined |
+| `docs/roadmap.md`, `docs/plan.md`, `docs/done.md` | One gate ledger: pending, in flight, shipped with proof |
+| `docs/open.md`, `docs/decisions/` | Open questions by slug; dated append-only records: decided, rejected, reopens if. `decisions/sources/` holds the verbatim briefs, handoffs, interviews, and red-lane output the records cite |
+
+Tests sit beside the code they test ({{test_convention}}).
+
+## Commits
+
+{{commit_policy}}
+
+## Commands
+
+```
+{{commands}}
+```

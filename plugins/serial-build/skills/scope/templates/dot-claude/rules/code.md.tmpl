@@ -1,0 +1,19 @@
+---
+paths:
+{{code_paths}}
+---
+
+# Code rules
+
+- Less is more; the code explains the implementation. Comment only why: intent, a constraint,
+  or what a "cleanup" would break. Keep each comment to two lines.
+- Never put dates or decision history in comments. Current rationale lives in
+  `docs/tech/architecture.md`, by stack; history lives in `docs/decisions/`. Cite one of them by
+  anchor or slug instead of restating it.
+- Public interfaces get doc comments in the ecosystem's own format; internal code does not need
+  them where names and types already say it.
+- Justify every escape hatch (a forced unwrap, a type-checker ignore, a lint disable, a lock or
+  concurrency annotation) with a one-line reason beside it.
+- No commented-out code, no change narration, no TODO without an owner.
+- Keep pure computation and I/O in separate functions. A code path that drops work without
+  raising says so.

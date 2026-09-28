@@ -1,0 +1,21 @@
+---
+paths:
+{{product_paths}}
+---
+
+# Product rules
+
+These paths are what ships. Test tooling never lives here.
+
+1. Anything that exists to measure, script, capture, or drive the product for a test is a harness,
+   not a feature. It lives beside the tests ({{test_convention}}), never behind a debug flag in a
+   product file and never as a hidden button, route, or command.
+2. A debug view may show state. It never drives the product, plays scripts, or writes files. If a
+   test needs the product driven, the harness drives the same code directly.
+3. A deployable's bundle holds what the product needs at runtime. Scripts, baselines, fixtures, and
+   captures are never bundled into it.
+4. Sharing is by the harness importing or compiling the product's code, never by making the product
+   aware of the harness. The product builds and runs with every test folder deleted.
+5. A fix a harness surfaces is product code and belongs here; the code that surfaced it does not.
+6. The red lane's failing tests follow the same rule: they live under the test paths, and the fix
+   they call for is ordinary product code written by the builder, never by the red lane.

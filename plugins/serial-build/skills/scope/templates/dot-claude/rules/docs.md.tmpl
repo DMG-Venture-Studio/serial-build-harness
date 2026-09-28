@@ -1,0 +1,29 @@
+---
+paths:
+  - "docs/**"
+  - "CLAUDE.md"
+---
+
+# Docs rules
+
+1. Plain English first; the glossary is for absolute need. Write every doc so a cold reader
+   understands it without the glossary. A term earns an entry only when both hold: plain English
+   can't carry it without a paragraph of explanation each time, and more than one file uses it.
+   Before adding an entry, rewrite the sentence without the term; if the rewrite reads fine, there
+   is no entry. A new entry needs {{owner_name}}'s approval, named individually. Removing an entry
+   beats adding one.
+2. The glossary is the only place a term that passes that test is defined; other files use it and
+   never redefine it.
+3. A reference is a slug (a decision record by the part of its name after the date, an open
+   question or a gate by its heading), never a file path and never code. Cite it as See `slug`,
+   and say in the same sentence what it is and why it matters.
+4. Current state and history never share a file. Decision records are dated and append-only, with
+   Decided, Rejected, and Reopens if; the standing docs hold only what is true now, with no dates,
+   status, or rejected alternatives. Verbatim briefs, handoffs, and interviews are filed under
+   decision sources and cited by the record that acted on them.
+5. One role per file, one fact in one place. If a fact seems to need two homes, one of them cites
+   the other.
+6. Never write a compressed handle ("the three readers", "lane B", "the sync layer"). Expand it into
+   the concrete thing each time.
+7. Before asking {{owner_name}} to approve a docs change, run the plugin's canon check and report
+   each PASS or FAIL; a failure is fixed and rerun first.

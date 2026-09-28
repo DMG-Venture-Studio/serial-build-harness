@@ -1,0 +1,21 @@
+# Architecture
+
+Role: why the code is the way it is, current state, indexed by stack. Code comments cite entries
+here by anchor, for example `docs/tech/architecture.md#toolchain`. Rewritten when a decision
+changes; the history is in `docs/decisions/`. Never holds status or plans.
+
+{{architecture_sections}}
+
+## toolchain
+
+{{toolchain}}
+
+**Generated files are never hand-edited.** {{generated_files}} Each generated path and the command
+that regenerates it are listed in `.claude/serial-build.json`; a hook refuses a hand edit to one
+and names the command, because a hand edit is silently lost on the next regeneration.
+
+**Local gates name the line in the session that wrote it.** The checks in
+`.claude/serial-build.json` run from hooks: the edit checks after every edit to their paths, the
+stop checks when a session ends its turn with uncommitted changes under their paths that have not
+yet passed. Both run the same commands listed in `CLAUDE.md`, so a session and a person run the
+same thing.

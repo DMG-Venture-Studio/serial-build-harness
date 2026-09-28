@@ -1,0 +1,82 @@
+# How {{project_name}} is built
+
+No paths filter: this file loads in every session. It holds the serial-build process and the rules
+for working with {{owner_name}}; the project itself is described in CLAUDE.md.
+
+## Floors
+
+- Roots have one job each; no new top-level directory unless a deployable needs one. Tests sit
+  beside the code they test. Test tooling never ships in a deployable: harnesses, fixtures,
+  scripts, and debug actions live with the tests (`.claude/rules/product.md`).
+- Generated files are never hand-edited. `.claude/serial-build.json` lists each one with the
+  command that regenerates it, and a hook refuses a hand edit naming that command.
+- Plain English first; the glossary is for absolute need. A term earns an entry only when plain
+  English can't carry it without a paragraph each time and more than one file uses it; otherwise
+  write it out. New entries need {{owner_name}}'s approval by name; removing one beats adding one
+  (`.claude/rules/docs.md`).
+- Done means {{owner_name}} ran the gate's demo on the running product, tried to break it, and
+  said its acceptance sentence. A report, a test, or a green check never accepts a gate; it only
+  decides whether {{owner_name}} is asked to run the demo.
+- Models propose; code decides. A gate reaches `docs/done.md` only through the plugin's ship-gate
+  script, which refuses while the red lane's record is not clear or a proof fails; a hook refuses
+  hand edits to that file.
+- Every gate is attacked before it ships. The red lane, a fresh agent that did not build the gate,
+  tries to make it fail from its own worktree and may bring back only tests. A gate with a red
+  finding that still reproduces does not hand off.
+
+## Process
+
+A gate is one slice of the product that {{owner_name}} can run and judge: what it builds, the
+demo that shows it, what the red lane must try in order to break it, and the sentence
+{{owner_name}} can say once it works. The loop is plan, build, break, demo, hand off; intake runs
+whenever something new turns up.
+
+- `/serial-build:gate` plans the first written-out roadmap gate into `docs/plan.md` on Claude's
+  plan mode, after an adversarial review of every draft. Never another planning skill for a gate.
+- `/serial-build:intake <finding>` slots a finding, idea, bug, or brief into the docs. Never edit
+  the plan or the standing docs ad hoc.
+- `/serial-build:red` sends a fresh agent to break the active gate. Its only outputs are a failing
+  test or "nothing found" with every attempt listed. It never edits the fix.
+- `/serial-build:demo-brief` writes {{owner_name}}'s instructions for a gate's demo, including the
+  step where {{owner_name}} tries to break it, from the project's data rather than memory.
+- `/serial-build:handoff` re-runs every proof in `docs/done.md` and ships an accepted gate through
+  the ship-gate script. When another plugin also has a handoff skill, use the full name.
+- `{{inbox}}/` is an inbox, never committed. Hooks list it at session start and refuse to stop
+  while a session that touched it leaves items behind.
+
+## Writing to {{owner_name}}
+
+{{owner_writing}}
+
+- Consequence before mechanism: the first sentence says what it means or what breaks.
+- Define every term where it is used, every time, not only the first time in a session.
+- Every reference says what it is and why it matters in the same sentence. A bare slug, file
+  path, or numbered item ("option B", "task 3") restates its content on every use.
+- A settled decision is stated with its consequence: what it buys, what breaks without it, what it
+  costs. Never "choices you may overrule". A genuinely open choice is an open-question slug.
+- Never ask for approval of a diff. Run the mechanical checks, then summarize in at most ten lines.
+
+## Stay realistically decoupled
+
+- When two systems must cooperate, prefer the arrangement that lets each keep working when the
+  other is absent, wrong, or slow. Realistically, not dogmatically: some coupling is the point of
+  the work, and indirection that costs more than it saves is worse.
+- The test is what happens when the far side is missing. A write that does nothing when
+  unconfigured, a schema contract with no read-back, a version a consumer pins at its own pace stay
+  decoupled. Reading another system's database, branching on its internal state, or requiring
+  both sides to deploy together does not.
+- Watch the direction. Writing into someone's store is a contract; reading from it makes their
+  retention, schema changes, and outages your problem. When a feature can be built either way,
+  take the one that adds no new read dependency.
+- State the coupling a change adds in the same breath as the feature, so the choice is visible
+  rather than discovered later.
+
+## Spending money
+
+- Spend buys proof: run the one call that shows a thing works, the cheapest version of it, without
+  asking. Spend that only makes something "more thorough" is asked about first.
+- A command that calls a paid model or service has `--dry-run` (zero calls, each item with its
+  reason and estimated cost) and `--list`; a skill only chooses the target and calls the command.
+- Recurring spend (a schedule, a heartbeat, a polling loop that calls a model) needs
+  {{owner_name}}'s explicit approval with its cost per day.
+- Report measured spend and where it went, never an estimate after the fact.

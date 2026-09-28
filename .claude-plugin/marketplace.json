@@ -1,0 +1,20 @@
+{
+  "name": "serial-build-harness",
+  "owner": {
+    "name": "DMG Venture Studio"
+  },
+  "metadata": {
+    "description": "The serial-build harness: build a product one owner-accepted gate at a time, with a red lane that tries to break each gate before it ships.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "serial-build",
+      "source": "./plugins/serial-build",
+      "description": "Scope a project by interview, plan each gate on plan mode with an adversarial reviewer, slot findings in without ad-hoc edits, break every gate with a fresh red-lane agent, and hand off only what the product owner ran and accepted. Hooks are silent outside projects that opt in.",
+      "version": "0.1.0",
+      "category": "workflow",
+      "keywords": ["workflow", "planning", "gates", "red-team", "scaffold"]
+    }
+  ]
+}

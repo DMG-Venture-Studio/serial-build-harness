@@ -1,0 +1,21 @@
+# Glossary
+
+Role: the only place a term is defined, and only a term plain English cannot carry that more than
+one file uses. Other files use such a term and never redefine it; every other term is written out
+in plain English and has no entry. Terms in alphabetical order.
+
+- **Acceptance**: {{owner_name}} running a gate's demo on the running product and being able to
+  say its acceptance sentence. Never a report, a test, or a green check read on their behalf.
+- **Gate**: one slice of the product that {{owner_name}} can run and judge. It names what it
+  builds, the demo that shows it, what the red lane must try in order to break it, and the sentence
+  {{owner_name}} can say once it works. A gate is pending in the roadmap, in flight in the plan,
+  and shipped in done with a proof that still passes.
+- **Red finding**: a failure the red lane reproduced in a gate, recorded as a committed test that
+  fails. It is resolved when that test passes; until then the gate cannot hand off.
+- **Red lane**: an independent attempt to break each gate before it ships, run by a fresh agent
+  that did not build it and may write only tests. Its only outputs are a failing test or "nothing
+  found" with every attempt listed. It exists because a gate proven green by the session that
+  built it tends to cover only the scenario it was written for.
+- **Slug**: the lowercase, hyphenated name that identifies a gate, an open question, or a decision
+  record (the part of its name after the date). Every reference uses the slug, never a file path or
+  a number.

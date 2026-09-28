@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "owner": { "name": "Ada" },
+  "inbox": "claude_outputs",
+  "generated": [
+    { "path": "src/tally/_version.py", "regenerate": "uv run python -m setuptools_scm --write src/tally/_version.py" },
+    { "path": "web/app/[id].ts", "regenerate": "npm run gen:routes" }
+  ],
+  "checks": {
+    "on_edit": [
+      { "name": "no forbidden marker", "paths": ["src/**"], "run": "! grep -n FORBIDDEN \"$SB_FILE\"" }
+    ],
+    "on_stop": [
+      { "name": "tests", "paths": ["src/**", "tests/**"], "run": "sh tests/check.sh" }
+    ]
+  },
+  "red": { "test_paths": ["tests/**"] }
+}

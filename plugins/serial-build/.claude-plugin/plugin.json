@@ -1,0 +1,12 @@
+{
+  "name": "serial-build",
+  "version": "0.1.0",
+  "description": "Build a product one demonstrable gate at a time: an interview that scaffolds the project, a gate ledger (roadmap, plan, done with proof), plan-mode gate planning with an adversarial reviewer, intake that never edits the docs ad hoc, a red lane that tries to break every gate before it ships, and a handoff that re-runs every proof. Hooks guard generated files, lint on edit, test at stop, and keep an inbox empty, and all of them do nothing in a project without .claude/serial-build.json.",
+  "author": {
+    "name": "DMG Venture Studio"
+  },
+  "homepage": "https://github.com/DMG-Venture-Studio/serial-build-harness",
+  "repository": "https://github.com/DMG-Venture-Studio/serial-build-harness",
+  "license": "MIT",
+  "keywords": ["workflow", "planning", "roadmap", "gates", "adversarial-review", "red-team", "scaffold", "docs"]
+}
