@@ -654,6 +654,41 @@ script "$rf" ship-gate.sh rf-gate --accepted "It refuses the empty one."
 expect "the gate ships" 0 "moved to docs/done.md"
 check "the done entry counts the voided run and states each run's cost" 'grep -q "over 2 run(s) and 1 voided run(s)" "$rf/docs/done.md" && grep -q "red lane cost: run 1: 26 min, 1.4M tokens; run 2: 12 min, 0.6M tokens; voided: $today, 9 min, 0.5M tokens" "$rf/docs/done.md"' "$(grep "Tried to break" "$rf/docs/done.md")"
 
+echo "-- plan-draft: the next gate's plan drafted ahead, outside the project (issues 4, 6)"
+printf '\n### next-gate\n\nBuilds: a summary line.\n\nDemo: Ada runs it. Break it: a broken file beside a valid one.\n\nDepends on: none.\n\nDecided: none.\n\nDecide by proof: none.\n\nOpen: none.\n\nQA: the summary is right.\n\nTried to break: a broken neighbour.\n\nAcceptance: Ada can say the summary is right.\n' >> "$rf/docs/roadmap.md"
+commit "$rf" "Intake: next-gate written out"
+script "$rf" plan-draft.sh status next-gate
+expect "no draft yet" 1 "no draft of next-gate"
+script "$rf" plan-draft.sh start nope
+expect "only a written-out roadmap gate is drafted" 1 "no written-out gate"
+script "$rf" red-guard.sh snapshot
+script "$rf" plan-draft.sh start next-gate
+expect "start cuts a branch and a worktree, and prints the launch command" 0 "/serial-build:gate --draft next-gate"
+dwt=$(printf '%s\n' "$out" | sed -n 's/^plan-draft: the draft of next-gate will be written in \(.*\), on the branch.*/\1/p')
+check "the draft worktree is outside the project" '[ -d "$dwt" ] && case "$dwt" in "$rf"/*) false ;; *) true ;; esac' "$dwt"
+script "$rf" plan-draft.sh status next-gate
+expect "a started draft is in progress until saved" 2 "in progress"
+printf '# next-gate\n\nAcceptance: Ada can say the summary is right.\n\n- [ ] Add the summary to `src/tally/core.py`.\n\nProof:\n\n    sh tests/check.sh\n\nTried to break (the red lane attempts at least these):\n- a broken neighbour\n\nReview: two passes, no major finding on the second.\n' > "$dwt/docs/plan.md"
+(cd "$dwt" && "$SHELL_UNDER_TEST" "$S/plan-draft.sh" save next-gate) > "$WORK/out" 2>&1; code=$?; out=$(cat "$WORK/out")
+expect "the draft session saves its draft from its own worktree" 0 "is saved on serial-build/draft-next-gate"
+script "$rf" red-guard.sh verify
+expect "drafting during a red run does not void it" 0 "nothing but tests changed"
+script "$rf" plan-draft.sh delta next-gate
+expect "with nothing changed, the draft goes to the owner as reviewed" 0 "nothing the draft of next-gate depends on changed"
+echo 'summary = 1' >> "$rf/src/tally/core.py"; commit "$rf" "fix from the demo"
+script "$rf" plan-draft.sh delta next-gate
+expect "a change to a file the draft names needs one review pass on the change" 3 "src/tally/core.py"
+sed 's/^QA: the summary is right.$/QA: the summary is right, and totals match./' "$rf/docs/roadmap.md" > "$WORK/r" && cp "$WORK/r" "$rf/docs/roadmap.md"
+script "$rf" plan-draft.sh delta next-gate
+expect "so does a change to the gate's own roadmap section, such as a folded cleanup task (issue 5)" 3 "the next-gate section changed"
+script "$rf" plan-draft.sh take next-gate
+expect "take prints the draft" 0 "Add the summary to"
+check "the project's own plan and branch are untouched by the draft" '[ ! -f "$rf/docs/plan.md" ] && [ "$(git -C "$rf" symbolic-ref --short HEAD)" != serial-build/draft-next-gate ]'
+script "$rf" plan-draft.sh drop next-gate
+expect "drop removes the draft" 0 "dropped"
+check "the branch and worktree are gone" '! git -C "$rf" show-ref -q --verify refs/heads/serial-build/draft-next-gate && [ ! -d "$dwt" ]'
+git -C "$rf" checkout -q -- docs/roadmap.md
+
 echo "-- ship-gate --regress keeps the gate in the ledger (review item 6)"
 cp "$proj/docs/roadmap.md" "$WORK/roadmap.keep"; cp "$proj/docs/done.md" "$WORK/done.keep2"
 printf '# Roadmap\n\nRole: pending gates only.\n' > "$proj/docs/roadmap.md"
@@ -720,6 +755,9 @@ check "gate steps 2 to 4 never ask the owner (issue 9)" 'grep -q "Steps 2 to 4 n
 check "the gate template runs the demo before the red task (issue 8)" 'awk "/Run the demo end to end/ { d = NR } /Run \/serial-build:red on this gate/ { r = NR } END { exit !(d && r && d < r) }" "$P/skills/gate/SKILL.md"'
 check "the red skill runs from a fresh session and has a post-fix delta run (issues 2, 3)" 'grep -q "Run this skill in a fresh session" "$P/skills/red/SKILL.md" && grep -q "## After the fixes: the delta run" "$P/skills/red/SKILL.md"'
 check "the breaker carries the rules against re-pins (issue 3)" 'grep -q "One finding per test file" "$P/agents/red-breaker.md" && grep -q "at least 5x the measured latency" "$P/agents/red-breaker.md"'
+check "intake folds a cleanup-only finding into the next product gate, stating the cost (issue 5)" 'grep -q "^f. \*\*Cleanup only\*\*" "$P/skills/intake/SKILL.md" && grep -q "blocks that" "$P/skills/intake/SKILL.md"'
+check "handoff starts the next gate's draft without asking, and never a building session (issue 6)" 'grep -q "start drafting it" "$P/skills/handoff/SKILL.md" && grep -q "without asking" "$P/skills/handoff/SKILL.md" && grep -q "Never launch a background session that builds" "$P/skills/handoff/SKILL.md"'
+check "gate takes a waiting draft through the delta check (issue 4)" 'grep -q "plan-draft.sh delta" "$P/skills/gate/SKILL.md" && grep -q "\-\-draft <gate-slug>" "$P/skills/gate/SKILL.md"'
 missing_next=$(for k in gate intake red demo-brief handoff; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
 check "every step names the next command (issue 6)" '[ -z "$missing_next" ] && grep -q "next: \`/clear\`" "$P/skills/gate/SKILL.md"' "$missing_next"
 

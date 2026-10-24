@@ -72,19 +72,27 @@ Commit per the project's commit policy, as "Handoff: <what moved or what waits, 
 
 The next action is implicit: `docs/plan.md` if it exists, else `/serial-build:gate` on the first
 written-out roadmap gate (or `/serial-build:intake` to write out the next one-line gate). Say
-which, in one line. Other plugins also ship a skill named handoff; always name this one in full,
-`/serial-build:handoff`, when telling the owner what to run.
+which in one line, as the command to run after `/clear` or in a new session, for example "next:
+`/clear`, then `/serial-build:gate`". The ledger holds everything a cold start needs, so the next
+session never inherits this one's context. Other plugins also ship a skill named handoff; always
+name this one in full, `/serial-build:handoff`, when telling the owner what to run.
 
-When the next session starts immediately, offer to launch it in the background, seeded with the
-active plan, and ask before launching; a background agent that starts work the owner meant to
-supervise is worse than none:
+When a gate shipped and the next written-out roadmap gate has no draft
+(`sh "${CLAUDE_PLUGIN_ROOT}/scripts/plan-draft.sh" status <next-gate>` exits 1), start drafting it
+now, without asking:
 
 ```
-claude --bg --name "<descriptive name>" "$(cat docs/plan.md)"
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/plan-draft.sh" start <next-gate>
 ```
 
-Without a plan, seed it with the first gate's heading and acceptance and the instruction to run
-`/serial-build:gate`. Always pass a descriptive `--name`; it is what the job list shows.
+and run the launch command it prints, which starts `/serial-build:gate --draft <next-gate>` in the
+background from a worktree outside the project. Always keep its descriptive `--name`; it is what
+the job list shows. Asking first buys nothing: the draft session writes only to its own branch,
+and the owner approves the plan when `/serial-build:gate` takes the draft, exactly as for a plan
+made from scratch. If a draft is already saved, the next command is `/serial-build:gate`, which
+takes it.
+
+Never launch a background session that builds; the owner supervises building.
 
 ## What stays out
 

@@ -33,6 +33,12 @@ and tell the owner: "next: `/clear`, then `/serial-build:red`".
   (`node_modules`, `.venv`); `.worktreeinclude` names small ignored files to copy (`.env`).
   `/serial-build:scope` writes these; without them the breaker's tests cannot run in its worktree.
 
+Planning the next gate need not wait for this one to ship. If the next written-out roadmap gate
+after this one has no draft (`plan-draft.sh status <next-gate>` exits 1), start one now, before
+the snapshot: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/plan-draft.sh" start <next-gate>`, then run the
+launch command it prints. The draft session works in a worktree outside the project, so it
+neither voids this run nor hits the red lock.
+
 ## 2. Snapshot, and take the red lock
 
 Stop the dev stack and anything else that writes into the project first: a daemon's log, a

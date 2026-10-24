@@ -25,7 +25,7 @@ tree. Never `docs/plan.md` for editing: see step 5.
 
 ## 3. Classify it as exactly one
 
-a. **New work, consistent with the docs**: draft a roadmap gate with every section (Builds, Demo
+a. **New work, consistent with the docs** (not a cleanup-only repair; see f): draft a roadmap gate with every section (Builds, Demo
    ending in a `Break it:` step where the owner tries to break it, Depends on, Decided, Decide by
    proof, Open, QA, Tried to break, Acceptance) and propose where it slots relative to the
    existing gates.
@@ -43,6 +43,22 @@ d. **A regression** (a proof in `docs/done.md` no longer passes): move that gate
 e. **Writing out a later gate** (the next one-line gate in a roadmap stage's Later list is about
    to be planned): replace its line with the gate written out with every section, as in a, keeping
    its slug and its place in the order.
+
+f. **Cleanup only**: the finding (1) only repairs or hardens behaviour a shipped gate already
+   has, and (2) gives the owner nothing new to see. It does not become a gate of its own, which
+   would pay the whole fixed cost of a gate (plan, reviews, red lane, demo, handoff) for a small
+   build. Fold it into the next written-out product gate after the active one, the next one that
+   gives the owner something new to see: add the repair to its Builds as one sentence, a QA line
+   that proves it, and a Tried to break bullet that attacks it. Its proof then joins that gate's
+   Proof block, the red lane attacks it with that gate, and the owner demos it there. If no
+   product gate is written out, write the next one out (as in e) with the repair folded in.
+
+   The cost, stated in the summary every time: a repair that keeps failing now blocks that
+   product gate's ship, and a later regression of its proof sends the whole product gate back to
+   the roadmap. So it stays a gate of its own, and the summary says why, when it guards one of the
+   project's floors (the hard rules in CLAUDE.md), or when the next product gate is a stage or
+   more away. A draft of that gate already made ahead (`/serial-build:gate --draft`) is not
+   edited; the gate skill's delta check sees the changed roadmap section and reviews the change.
 
 Write every sentence for someone who has never opened the repository: say what each thing is and
 what changes for it, expand every handle into the concrete thing, cite records as See `slug`. No

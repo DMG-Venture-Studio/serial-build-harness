@@ -16,12 +16,46 @@ and what blocks it; never design opinions, alternatives, or estimates.
 Read the gate in `docs/roadmap.md`: the first `###` gate, written out with every section. If
 the roadmap has only one-line gates in a Later list left, the next one is written out in full
 through `/serial-build:intake` first; a one-line gate is not plannable. If `docs/plan.md`
-exists, stop and ask whether to finish, regenerate, or retire it first. There is never more than
-one active plan.
+exists, there is an active plan: say so, and offer to draft the next written-out gate ahead
+instead (below). Never write a second `docs/plan.md`.
+
+Scripts are under `${CLAUDE_PLUGIN_ROOT}/scripts`; run them with `sh` from the project root.
+
+**A draft is waiting.** Run `plan-draft.sh status <gate-slug>`. When it says a draft is saved, the
+drafting and its review passes are done; check what moved since with
+`plan-draft.sh delta <gate-slug>`:
+
+- exit 0, nothing it depends on changed: call EnterPlanMode, read the draft with
+  `plan-draft.sh take <gate-slug>`, and go to step 5 with it;
+- exit 3, something changed (a file its tasks name, its roadmap section, a decision record, an
+  open question): call EnterPlanMode, take the draft, and run one adversarial review pass on the
+  change only (step 4's brief, given the draft and the delta's list), fold what it finds, then go
+  to step 5.
+
+After step 5 writes `docs/plan.md`, run `plan-draft.sh drop <gate-slug>`. A draft that status
+says is still in progress is a draft session that has not finished; say so and wait, or drop it
+and plan from scratch.
+
+**Drafting ahead (`--draft <gate-slug>`).** Planning need not wait for the active gate to ship.
+While gate N is in red, demo, or handoff, draft gate N+1, the next written-out roadmap gate after
+the active one:
+
+1. From the project, `plan-draft.sh start <gate-slug>` cuts a branch and a worktree outside the
+   project and prints the command that launches the draft session there in the background. A
+   session outside the project folder cannot void a red run or hit the red lock.
+2. In that session ("$ARGUMENTS" is `--draft <gate-slug>`): the plan there is gate N's, so skip
+   this step's one-plan stop. Run steps 2 to 4 for the named gate without plan mode (nobody is
+   there to approve, and the worktree is not the project), writing the draft to `docs/plan.md`
+   in the worktree. Then run `plan-draft.sh save <gate-slug>`, which commits it on the draft's
+   branch with the commit it was reviewed against. Never call ExitPlanMode or ask the owner; end
+   with one line naming the gate and the review result.
+
+The owner approves a draft only when this skill takes it, as above, in the same sitting as gate
+N's demo or right after.
 
 ## 2. Read mechanically, in plan mode
 
-Call EnterPlanMode. Read by rule, not by judgment:
+Call EnterPlanMode (not when drafting ahead). Read by rule, not by judgment:
 
 - every decision record the gate names by slug in its Decided and Decide by proof sections
   (`docs/decisions/*-<slug>.md`);

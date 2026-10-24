@@ -41,6 +41,9 @@ whenever something new turns up.
   step where {{owner_name}} tries to break it, from the project's data rather than memory.
 - `/serial-build:handoff` re-runs every proof in `docs/done.md` and ships an accepted gate through
   the ship-gate script. When another plugin also has a handoff skill, use the full name.
+- Each step runs in a fresh session and ends by naming the next command; the ledger is the
+  only memory between them. The next gate's plan may be drafted ahead in the background
+  (`/serial-build:gate --draft`), but {{owner_name}} approves it only when it is taken.
 - `{{inbox}}/` is an inbox, never committed. Hooks list it at session start and refuse to stop
   while a session that touched it leaves items behind.
 
