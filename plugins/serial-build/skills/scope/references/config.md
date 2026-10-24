@@ -36,6 +36,7 @@ needs no jq or python on the machine.
 | `checks.on_stop` | no | stop-checks | List of `{name, paths, run}`. When the session ends its turn and git shows uncommitted changes under `paths` that `run` has not yet been run on, `run` runs; a failure keeps the session working once per distinct set of changes. Needs a git work tree. |
 | `red.test_paths` | for the red lane | red-fence, red-guard, /serial-build:red | Patterns for the files the red-breaker agent may write. Without it `/serial-build:red` refuses to run, and so no gate can hand off. |
 | `red.test_command` | no | /serial-build:red | The command the red-breaker agent runs one test file with, `{file}` standing for the file, such as `uv run pytest {file} -q -p no:cacheprovider`. Without it the breaker is given the test commands from CLAUDE.md, never the `checks.on_stop` suite, which costs minutes per run. |
+| `red.lanes` | no | /serial-build:red, red-pack | List of `{name, focus, paths}`: two or three slices of a gate (by noun or surface) for breakers that run in parallel, one per lane. `focus` says the slice in words; `paths` optionally limits the context pack's source to it. The first lane also takes every subprocess and timing attack, because parallel load makes timing tests flake. Absent: one breaker per run. |
 
 Patterns are relative to the project root. Only `*` is a wildcard, and it also crosses `/`; `**`
 and `**/` mean the same as `*`: `src/**` matches every file under `src/`, and `**/*.test.ts`

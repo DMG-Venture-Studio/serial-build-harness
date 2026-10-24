@@ -66,7 +66,29 @@ work:
   `uv run pytest {file} -q -p no:cacheprovider`). Without it, the test commands from CLAUDE.md;
   never the `checks.on_stop` suite, which costs minutes per run and which the commit hooks run
   anyway;
+- the context pack: the output of `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-pack.sh" [lane name]`,
+  pasted verbatim. It is generated, never written by hand: the files changed since the plan, the
+  full changed source in the breaker's slice, and the test fixtures it can reuse. It saves the
+  breaker the reading it would otherwise do first and then carry in every later turn; it may
+  still read anything;
 - the instruction that it did not build this and must not trust any claim that it works.
+
+**Lanes.** When the config has `red.lanes`, launch one breaker per lane, all at once, after the one
+snapshot. Each gets the same brief plus its lane's `focus` and its own pack
+(`red-pack.sh <lane name>`), and is told:
+
+- the whole "Tried to break" list is its minimum, and its job is to go past the list in its
+  slice. It may follow a bug anywhere. Do not narrow the brief to the list: in a measured gate,
+  only one of sixteen accepted findings came from running a listed attack as written; seven were
+  neighbours of one and eight were beyond the list;
+- every subprocess and timing attack belongs to the first lane alone, since parallel load makes
+  timing tests flake;
+- to name its test files `red_<lane name>_<what>` so lanes never write the same file (a
+  collision voids the whole run).
+
+When all lanes return, file them as one run: `red-file.sh` with one `--output` per lane and one
+`--worktree` per worktree named. It verifies once, imports from every worktree, files all
+outputs as one source, and records one `Red run:` line. A delta run uses one breaker.
 
 A hook fences it while it runs (writes outside the test paths and git commands other than
 read-only ones are refused), but the fence is advisory; the checks in step 5 are the guarantee.

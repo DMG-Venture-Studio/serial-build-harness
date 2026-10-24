@@ -88,5 +88,20 @@ else
   say "red lane: no \"red.test_command\"; the breaker is given the test commands from CLAUDE.md"
 fi
 
+n=$(sb_count "$cfg" red.lanes)
+if [ "$n" -gt 0 ]; then
+  [ "$n" -gt 3 ] && warn "\"red.lanes\" has $n lanes; past three, parallel breakers mostly re-find each other's bugs and load the machine"
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    ln=$(sb_get "$cfg" "red.lanes.$i.name") || { err "red.lanes[$i] has no \"name\""; ln=?; }
+    lf=$(sb_get "$cfg" "red.lanes.$i.focus") || { err "red.lanes[$i] ($ln) has no \"focus\": the slice of the gate it attacks, in words"; lf=?; }
+    [ "$i" -eq 0 ] && lf="$lf; also every subprocess and timing attack"
+    say "red lane $ln: $lf"
+    i=$((i + 1))
+  done
+else
+  say "red lane: one breaker per run (no \"red.lanes\")"
+fi
+
 [ "$errors" -eq 0 ] && printf 'OK    %s\n' "$file"
 [ "$errors" -eq 0 ]

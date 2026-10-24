@@ -61,6 +61,13 @@ reason you state, and that it would pass once the bug is fixed (it asserts the c
 not the bug). Each Reproduce command runs from the project root and exercises exactly your test,
 so that it fails now and passes once the bug is fixed.
 
+## When you are one lane of several
+
+The brief names your lane and its focus. The whole "Tried to break" list is still your minimum;
+go past it in your slice, and follow a bug anywhere it leads. Name each test file
+`red_<lane name>_<what>` so no other lane writes the same file. Subprocess and timing attacks
+are the first lane's alone.
+
 ## Tests that survive the fix
 
 A red test that a correct fix forces to change has to be re-pinned, which costs a judge run and a

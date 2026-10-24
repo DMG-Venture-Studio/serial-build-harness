@@ -595,6 +595,37 @@ expect "asking again on the same tree answers from memory" 1 "not re-run"
 script "$rf" red-status.sh --fresh
 case "$out" in *"not re-run"*) no "--fresh re-runs" "$out" ;; *) ok "--fresh re-runs" ;; esac
 
+echo "-- red-pack: a generated context pack per lane (issue 3)"
+mkdir -p "$rf/tests" && printf 'import pytest\n\n@pytest.fixture\ndef statement():\n    return []\n\ndef helper_x():\n    pass\n' > "$rf/tests/conftest.py"
+mkdir -p "$rf/src/web" && echo 'route = 1' > "$rf/src/web/routes.py" && echo 'parse = 1' >> "$rf/src/tally/core.py"
+commit "$rf" "build more"
+sed 's|"red": { "test_paths": \["tests/\*\*"\] }|"red": { "test_paths": ["tests/**"], "test_command": "sh {file}", "lanes": [ { "name": "core", "focus": "the parser and its inputs", "paths": ["src/tally/**"] }, { "name": "web", "focus": "the routes" } ] }|' "$rf/.claude/serial-build.json" > "$WORK/cfg" && cp "$WORK/cfg" "$rf/.claude/serial-build.json"
+script "$rf" check-config.sh
+expect "check-config lists each lane, the first taking the timing attacks" 0 "red lane core: the parser and its inputs; also every subprocess and timing attack"
+script "$rf" red-pack.sh core
+expect "the pack names the gate, the lane, and the single-file test command" 0 "# Context pack: rf-gate, lane core"
+check "the core lane gets its slice in full, and not the other lane's" 'printf "%s" "$out" | grep -q "^### src/tally/core.py" && ! printf "%s" "$out" | grep -q "^### src/web/routes.py" && printf "%s" "$out" | grep -q "^    sh {file}"' "$out"
+check "the pack lists every changed file and the fixtures to reuse, but prints no test file as source" 'printf "%s" "$out" | grep -q "^- src/web/routes.py" && printf "%s" "$out" | grep -q "tests/conftest.py:3:@pytest.fixture" && ! printf "%s" "$out" | grep -q "^### tests/"' "$out"
+script "$rf" red-pack.sh web
+check "a lane with no paths gets every changed source file" 'printf "%s" "$out" | grep -q "^### src/web/routes.py" && printf "%s" "$out" | grep -q "^### src/tally/core.py"' "$out"
+script "$rf" red-pack.sh nope
+expect "an unknown lane is refused" 1 "no lane named"
+git -C "$rf" checkout -q -- .claude/serial-build.json
+
+echo "-- lanes: two breakers' outputs filed as one run (issue 3)"
+script "$rf" red-guard.sh snapshot
+wa="$rf/.claude/worktrees/agent-a" wb="$rf/.claude/worktrees/agent-b"
+git -C "$rf" worktree add -q --detach "$wa" HEAD && git -C "$rf" worktree add -q --detach "$wb" HEAD
+printf 'grep -q lane_a_fixed src/tally/core.py\n' > "$wa/tests/red_core_a.sh"
+printf 'grep -q lane_b_fixed src/tally/core.py\n' > "$wb/tests/red_web_b.sh"
+printf '## Findings\n- red-lane-bug: the core lane breaks it.\n  Test: tests/red_core_a.sh. Reproduce: `sh tests/red_core_a.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/lane1.md"
+printf '## Findings\n- red-lane-bug: the web lane breaks it too.\n  Test: tests/red_web_b.sh. Reproduce: `sh tests/red_web_b.sh`.\n\n## Attempts that found nothing\n- b: nothing.\n' > "$WORK/lane2.md"
+script "$rf" red-file.sh --output "$WORK/lane1.md" --output "$WORK/lane2.md" --worktree "$wa" --worktree "$wb" --cost "15 min, 0.8M tokens"
+expect "two lanes become one run" 0 "4 attempts, 2 findings"
+check "a slug two lanes both used is made unique, and the source holds both lanes" 'grep -q "^- red-lane-bug: the core lane" "$rf/docs/plan.md" && grep -q "^- red-lane-bug-2: the web lane" "$rf/docs/plan.md" && grep -q "^## Lane 2" "$rf"/docs/decisions/sources/red-rf-gate-$today-2.md'
+git -C "$rf" reset -q --hard HEAD && git -C "$rf" clean -qfd -- tests docs
+script "$rf" red-guard.sh abort
+
 echo "-- a voided run is recorded with the next filing, and the done entry states the cost (issue 2)"
 script "$rf" red-guard.sh snapshot
 echo planted >> "$rf/src/tally/core.py"
