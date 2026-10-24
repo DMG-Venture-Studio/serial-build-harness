@@ -23,6 +23,14 @@
 #     roadmap as a regression gate, files the failing output and the old entry
 #     under the decision sources, and only then removes its done entry.
 #
+#   ship-gate.sh --retire-proof <gate-slug> "<proof command>" --decision <slug>
+#     Removes one command from a shipped gate's Proof block, so the handoff stops
+#     re-running a proof that became redundant or moved to a schedule. Refuses
+#     unless the entry is as ship-gate wrote it, the command is in its Proof block
+#     and is not the last one, and a decision record docs/decisions/*-<slug>.md
+#     says why. Files the old entry under the decision sources, adds a
+#     "Retired:" line citing the record, and writes the entry's new checksum.
+#
 # The owner's acceptance and demotions are their acts; this script only records
 # them. Pass words they actually said, never a paraphrase. Run from the project root.
 set -u
@@ -124,6 +132,46 @@ EOF
   } > "docs/decisions/sources/$src.md"
   remove_section "$done" "##" "$slug"
   echo "ship-gate: $slug is back at the top of the roadmap as a regression gate; its failing output is filed as the decision source $src."
+  exit 0
+fi
+
+if [ "${1:-}" = --retire-proof ]; then
+  slug=${2:-} cmd=${3:-}
+  [ -n "$slug" ] && [ -n "$cmd" ] && [ "${4:-}" = --decision ] && [ -n "${5:-}" ] \
+    || refuse 'usage: ship-gate.sh --retire-proof <gate-slug> "<proof command>" --decision <decision-slug>'
+  dec=$5
+  [ -f "$done" ] && grep -qx "## $slug" "$done" || refuse "docs/done.md has no entry \"## $slug\""
+  record=$(ls docs/decisions/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-"$dec".md 2>/dev/null | head -n 1)
+  [ -n "$record" ] || refuse "no decision record docs/decisions/<date>-$dec.md; a proof is retired only for a reason the owner can read, so record the decision first (through /serial-build:intake)"
+  # The entry as check-canon.sh reads it: from its heading to its checksum line,
+  # blank lines kept only between text.
+  entry=$(awk -v h="## $slug" '
+    $0 == h { on = 1; print; next }
+    on && /^<!-- ship-gate [0-9-]+ -->$/ { exit }
+    on && !NF { held = held "\n"; next }
+    on { printf "%s%s\n", held, $0; held = "" }' "$done")
+  sum=$(awk -v h="## $slug" '$0 == h { on = 1; next } on && /^<!-- ship-gate [0-9-]+ -->$/ { print $3; exit } on && /^## / { exit }' "$done")
+  [ -n "$sum" ] && [ "$(printf '%s\n' "$entry" | cksum | awk '{print $1 "-" $2}')" = "$sum" ] \
+    || refuse "the done entry $slug is not as ship-gate.sh wrote it, so nothing is retired from it; that is the owner's call"
+  proof=$(printf '%s\n' "$entry" | awk '/^Proof:/ { on = 1; next } on && /^    / { print substr($0, 5); next } on && NF { exit }')
+  printf '%s\n' "$proof" | grep -qxF -- "$cmd" || refuse "the Proof block of $slug has no command \"$cmd\"; give it exactly as listed"
+  [ "$(printf '%s\n' "$proof" | grep -c .)" -gt 1 ] || refuse "\"$cmd\" is the last proof of $slug; a shipped gate keeps at least one proof the handoff re-runs"
+  newf=$(mktemp "${TMPDIR:-/tmp}/sb-retire.XXXXXX") || exit 1
+  trap 'rm -f "$newf" "$done.sb-tmp"' EXIT
+  printf '%s\n' "$entry" | CMD=$cmd awk -v add="Retired: \`$cmd\` from the proof. See \`$dec\`." '
+    /^Proof:/ { on = 1 } on && $0 == "    " ENVIRON["CMD"] && !gone { gone = 1; next } on && NF && !/^    / && !/^Proof:/ { on = 0 }
+    /^Accepted: / && !put { print add; print ""; put = 1 }
+    { print }' > "$newf"
+  newsum=$(cksum < "$newf" | awk '{print $1 "-" $2}')
+  src="retired-$slug-$today" k=1
+  while [ -e "docs/decisions/sources/$src.md" ]; do k=$((k + 1)); src="retired-$slug-$today-$k"; done
+  mkdir -p docs/decisions/sources
+  printf '# Source: a proof of %s retired\n\nRecorded %s by ship-gate.sh --retire-proof. Retired: `%s`. Why: See `%s`. The done entry as it stood, verbatim.\n\n---\n\n%s\n' "$slug" "$today" "$cmd" "$dec" "$entry" > "docs/decisions/sources/$src.md"
+  awk -v h="## $slug" -v f="$newf" -v mark="<!-- ship-gate $newsum -->" '
+    $0 == h { while ((getline l < f) > 0) print l; print ""; print mark; skip = 1; next }
+    skip && /^<!-- ship-gate [0-9-]+ -->$/ { skip = 0; next }
+    !skip' "$done" > "$done.sb-tmp" && mv "$done.sb-tmp" "$done"
+  echo "ship-gate: \`$cmd\` is retired from $slug's proof (See \`$dec\`); the old entry is filed as the decision source $src. The handoff no longer re-runs it."
   exit 0
 fi
 

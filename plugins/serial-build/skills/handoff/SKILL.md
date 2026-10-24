@@ -20,6 +20,14 @@ is never hand-edited (a hook refuses it); run
 `sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --regress <gate-slug> --failed "<the failing output>"`.
 Nothing stays in done on faith.
 
+A proof that no longer earns its re-run at every handoff (one another proof line already runs,
+such as a single test file the suite runs; or one the project moved to a weekly schedule) is
+retired, never skipped:
+`sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --retire-proof <gate-slug> "<command, exactly as listed>" --decision <slug>`.
+It needs a dated decision record saying why (file it through `/serial-build:intake` first) and
+refuses to retire a gate's last proof. A red finding's reproduce command is retired only when
+that record names the proof that still runs its test.
+
 ## 2. The red lane's verdict
 
 If `docs/plan.md` exists, run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh"` and quote its

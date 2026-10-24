@@ -520,6 +520,25 @@ sed 's/^Accepted: .*/Accepted: "Perfect in every way."/' "$proj/docs/done.md" > 
 script "$proj" check-canon.sh
 expect "a done entry changed by hand is reported (review item 10)" 1 "entry match-one-month changed after ship-gate.sh wrote it"
 cp "$WORK/done.keep" "$proj/docs/done.md"
+echo "-- ship-gate --retire-proof: a proof leaves done only for a recorded reason (issue 7)"
+ship --retire-proof match-one-month "sh tests/red_empty.sh" --decision red-weekly
+expect "retiring a proof needs a decision record" 1 "no decision record"
+printf 'Date: 2026-10-24\n\n## Decided\n\n- The empty-statement check runs weekly.\n\n## Rejected\n\n- Every handoff.\n\n## Reopens if\n\n- It regresses.\n' > "$proj/docs/decisions/2026-10-24-red-weekly.md"
+ship --retire-proof match-one-month "sh tests/nope.sh" --decision red-weekly
+expect "only a command in the entry's Proof block can be retired" 1 "has no command"
+ship --retire-proof match-one-month "sh tests/red_empty.sh" --decision red-weekly
+expect "a proof is retired" 0 "is retired from match-one-month"
+check "the command left the Proof block, a Retired line cites the record, and the old entry is filed" '! grep -q "^    sh tests/red_empty.sh" "$proj/docs/done.md" && grep -q "^    sh tests/check.sh" "$proj/docs/done.md" && grep -q "^Retired: \`sh tests/red_empty.sh\` from the proof. See \`red-weekly\`." "$proj/docs/done.md" && grep -q "sh tests/red_empty.sh" "$proj"/docs/decisions/sources/retired-match-one-month-*.md'
+script "$proj" check-canon.sh
+expect "the rewritten entry carries a valid checksum" 0 "PASS  every done entry is as ship-gate.sh wrote it"
+ship --retire-proof match-one-month "sh tests/check.sh" --decision red-weekly
+expect "a gate's last proof cannot be retired" 1 "is the last proof"
+cp "$proj/docs/done.md" "$WORK/done.retired"
+sed 's/^Accepted: .*/Accepted: "edited"/' "$WORK/done.retired" > "$proj/docs/done.md"
+ship --retire-proof match-one-month "sh tests/check.sh" --decision red-weekly
+expect "nothing is retired from an entry changed by hand" 1 "not as ship-gate.sh wrote it"
+cp "$WORK/done.keep" "$proj/docs/done.md"
+rm -f "$proj"/docs/decisions/sources/retired-match-one-month-*.md
 hook "$proj" session-start.sh '{"session_id":"s3"}'
 expect "with no written-out gate left, session start names the next one-line gate" 0 "next one-line gate is two-accounts"
 commit "$proj" "Handoff: match-one-month shipped"
