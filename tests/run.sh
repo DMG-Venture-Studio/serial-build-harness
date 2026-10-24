@@ -838,6 +838,11 @@ check "gate takes a waiting draft through the delta check (issue 4)" 'grep -q "p
 missing_next=$(for k in gate intake red demo-brief handoff; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
 check "every step names the next command (issue 6)" '[ -z "$missing_next" ] && grep -q "next: \`/clear\`" "$P/skills/gate/SKILL.md"' "$missing_next"
 
+echo "-- the version (an unchanged version is not picked up by /plugin update)"
+pv=$(jget "$P/.claude-plugin/plugin.json" version)
+mv_=$(jget "$REPO/.claude-plugin/marketplace.json" plugins.0.version)
+check "plugin.json and the marketplace entry carry the same version ($pv, $mv_)" '[ -n "$pv" ] && [ "$pv" = "$mv_" ]'
+
 echo "-- the README"
 fields=$(grep -o '^| `[a-z_.]*`' "$P/skills/scope/references/config.md" | tr -d '|` ')
 undocumented=$(for f in $fields; do grep -q "\`$f\`" "$REPO/README.md" || printf '%s ' "$f"; done)
