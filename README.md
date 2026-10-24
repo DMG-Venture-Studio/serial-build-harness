@@ -324,3 +324,8 @@ claude plugin validate --strict plugins/serial-build
 ```
 
 `tests/` sits outside `plugins/serial-build/`, so none of it is installed with the plugin.
+
+Every change that ships bumps `version` in `plugins/serial-build/.claude-plugin/plugin.json` and
+in the plugin's entry in `.claude-plugin/marketplace.json` (the tests check they agree). Claude
+Code caches an installed plugin by version, so `/plugin update` skips a change whose version did
+not move.
