@@ -76,15 +76,25 @@ Several other plugins ship a skill called `handoff`, so when names collide use t
    adversarial reviewer attacks every draft before the owner sees it.
 3. **Build**: the session works through the plan. Hooks refuse edits to generated files, lint
    each edit, and run the tests before the session can end its turn on new, uncommitted changes.
-4. **Red** (`/serial-build:red`): a fresh agent tries to break the gate. What it breaks comes back
-   as a failing test, and the builder fixes the code until it passes.
-5. **Demo** (`/serial-build:demo-brief`, then the owner): the owner runs the demo, tries to break
-   it, and says the acceptance sentence, or does not.
+   The plan's last build task runs the demo end to end and drafts its brief, so the bugs that
+   stop a demo are fixed before the red lane, not after.
+4. **Red** (`/serial-build:red`, from a fresh session): a fresh agent tries to break the gate.
+   What it breaks comes back as a failing test, and the builder fixes the code until it passes.
+   A delta run then attacks the fixes and their neighbours.
+5. **Demo** (`/serial-build:demo-brief`, then the owner): the brief's facts are refreshed by
+   re-running its commands, and the owner runs the demo, tries to break it, and says the
+   acceptance sentence, or does not.
 6. **Handoff** (`/serial-build:handoff`): re-runs every proof in done, then ships the accepted
    gate through the ship-gate script, which refuses while a red finding is open or a proof fails.
 
 **Intake** (`/serial-build:intake <finding>`) runs whenever a bug, idea, review, or handoff from
 another session arrives. It never edits the active plan; findings queue behind it.
+
+Each step runs in a fresh session and ends by naming the next command (for example "next:
+`/clear`, then `/serial-build:red`"). The ledger holds everything a cold start needs, and a
+session that carries a whole gate's context pays for all of it on every call. The one exception
+is the demo and the handoff, which share a session because the handoff ships on the owner's
+words said in it.
 
 ## What is in the plugin
 
@@ -94,7 +104,7 @@ another session arrives. It never edits the active plan; findings queue behind i
 |---|---|---|
 | `/serial-build:scope` | Detects whether the repository is empty, already has work, or is already set up. Asks one open round in the owner's own words, then multiple-choice rounds it drafts from the pitch. Reads the vision back in five lines for confirmation, and drafts the first gate in full plus three to six later ones in a line each. Shows the file tree it would write, each file marked new, same, append, or kept, and writes only after a yes. It never replaces an existing file the owner did not name. An existing CLAUDE.md gains a marked section once. Re-running it fills missing files from the saved answers without asking again. | A new project starts with no shared definition of done, no first demo, and a layout decided by whichever session got there first. |
 | `/serial-build:gate` | Plans one gate. It reads only the decision records and open questions the gate names, and drafts tasks, a Proof block, and a "tried to break" list. It runs the adversarial reviewer on every draft (at least twice) and writes `docs/plan.md` and any new open questions on approval. | Plans carry opinions and estimates instead of tasks, contradict earlier decisions, and reach the owner with build-stopping problems a reviewer would have caught. |
-| `/serial-build:intake` | Files a finding as exactly one thing: a new gate, an open question, a dated decision record, a regression, or the full write-up of the next one-line gate. Long inputs are kept verbatim as decision sources. It runs the mechanical canon checks and a reviewer against the source, and gives the owner a summary of ten lines or fewer instead of a diff. | Findings get patched into whatever doc is open, facts drift between copies, and the owner is asked to approve diffs nobody can read. |
+| `/serial-build:intake` | Files a finding as exactly one thing: a new gate, an open question, a dated decision record, a regression, or the full write-up of the next one-line gate. Long inputs are kept verbatim as decision sources. It runs the mechanical canon checks and a reviewer against the source, commits, and then gives the owner a summary of ten lines or fewer instead of a diff. It waits for the owner before committing only for a new glossary entry or a contradiction of what the owner stated. | Findings get patched into whatever doc is open, facts drift between copies, and the owner is asked to approve diffs nobody can read. |
 | `/serial-build:red` | Snapshots the project, sends the red-breaker agent at the active gate in its own git worktree with only what is on disk, and verifies nothing outside it changed. Brings back only test files, files the agent's raw output, re-runs each finding itself, and records the findings in the plan. | Gates are proven green by the session that built them, which covers only the scenario it wrote the checks for. |
 | `/serial-build:demo-brief` | Writes the owner's instructions for running the demo: what to do, what to look for, how to try to break it, and what to report back. Every fact comes from running something now, not from memory. | The owner runs the wrong thing or is told to expect the wrong result, and a pass means nothing. |
 | `/serial-build:handoff` | Re-runs every proof in done, moving a gate whose proof fails back to the roadmap. Checks the red lane's record and ships an accepted gate through the ship-gate script. Offers to start the next session in the background. | "Done" stays done on faith, and the next session re-reads the whole chat to find out where things are. |
@@ -176,6 +186,7 @@ stock Mac or Linux, and on a fresh Mac `python3` opens an installer dialog.
 | `checks.on_edit` | no | List of `{name, paths, run}`. After an edit to a matching file, `run` runs with `sh` from the project root, with `SB_FILE` set to the edited path, so a linter can check just that file. `paths` absent means every file. |
 | `checks.on_stop` | no | List of `{name, paths, run}`. At the end of a turn, when git shows uncommitted changes under `paths` that `run` has not yet been run on, `run` runs. Needs a git repository. |
 | `red.test_paths` | for the red lane | The files the red-breaker agent may write and bring back. Without it `/serial-build:red` refuses to run, so no gate can ship. |
+| `red.test_command` | no | The command that runs one test file, with `{file}` standing for it, such as `uv run pytest {file} -q -p no:cacheprovider`. The red-breaker agent runs its tests with it instead of the whole suite. |
 
 Patterns are relative to the project root. Only `*` is a wildcard, and it also crosses `/`; `**`
 and `**/` mean the same as `*`. So `src/**` matches everything under `src/`, and `**/*.test.ts`

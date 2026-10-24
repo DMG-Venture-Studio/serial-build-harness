@@ -35,6 +35,7 @@ needs no jq or python on the machine.
 | `checks.on_edit` | no | edit-checks | List of `{name, paths, run}`. After each Edit or Write to a file matching `paths`, `run` runs with `sh` from the project root, with `SB_FILE` set to the edited path; a non-zero exit is fed back to the session. `paths` absent: every file in the project. |
 | `checks.on_stop` | no | stop-checks | List of `{name, paths, run}`. When the session ends its turn and git shows uncommitted changes under `paths` that `run` has not yet been run on, `run` runs; a failure keeps the session working once per distinct set of changes. Needs a git work tree. |
 | `red.test_paths` | for the red lane | red-fence, red-guard, /serial-build:red | Patterns for the files the red-breaker agent may write. Without it `/serial-build:red` refuses to run, and so no gate can hand off. |
+| `red.test_command` | no | /serial-build:red | The command the red-breaker agent runs one test file with, `{file}` standing for the file, such as `uv run pytest {file} -q -p no:cacheprovider`. Without it the breaker is given the test commands from CLAUDE.md, never the `checks.on_stop` suite, which costs minutes per run. |
 
 Patterns are relative to the project root. Only `*` is a wildcard, and it also crosses `/`; `**`
 and `**/` mean the same as `*`: `src/**` matches every file under `src/`, and `**/*.test.ts`

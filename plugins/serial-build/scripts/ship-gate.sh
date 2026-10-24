@@ -140,8 +140,10 @@ if ! red=$(sh "$SB_PLUGIN/scripts/red-status.sh" "$SB_ROOT"); then
 fi
 printf '%s\n' "$red"
 
-proofs=$(awk '/^Proof/ { on = 1; next } on && /^(    |\t)/ { sub(/^(    |\t)/, ""); print; next } on && NF { on = 0 }' "$plan")
-manual=$(awk '/^Manual:/ { on = 1 } on && !NF { exit } on' "$plan")
+# Only the plan's top block, before its first "## " section (Demo brief, Red), holds
+# the proof; a line in a later section that happens to start with "Proof" is not one.
+proofs=$(awk '/^## / { exit } /^Proof/ { on = 1; next } on && /^(    |\t)/ { sub(/^(    |\t)/, ""); print; next } on && NF { on = 0 }' "$plan")
+manual=$(awk '/^## / { exit } /^Manual:/ { on = 1 } on && !NF { exit } on' "$plan")
 [ -n "$proofs$manual" ] || refuse "docs/plan.md has no Proof block (indented commands under a line starting \"Proof\") and no Manual: line; done needs a proof that can be re-run"
 
 records=$(LC_ALL=C awk -f "$SB_SCRIPTS/red-record.awk" "$plan")

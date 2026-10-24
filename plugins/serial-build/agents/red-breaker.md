@@ -58,6 +58,24 @@ reason you state, and that it would pass once the bug is fixed (it asserts the c
 not the bug). Each Reproduce command runs from the project root and exercises exactly your test,
 so that it fails now and passes once the bug is fixed.
 
+## Tests that survive the fix
+
+A red test that a correct fix forces to change has to be re-pinned, which costs a judge run and a
+commit. Every one measured so far broke one of these rules, so follow them:
+
+- **One finding per test file.** Two findings in one file means fixing one changes the other's
+  file.
+- **Assert only on what the test created.** Count, list, or compare only the rows, files, or
+  records the test itself made, never the whole table or folder; a fix that adds a row elsewhere
+  must not break it.
+- **Wait on terminal states, never transient ones.** Wait for "done", "failed", or "refused",
+  never for "running" or "queued", which a faster fix can skip past.
+- **Timing thresholds at least 5x the measured latency.** Measure first, then set the bound; a
+  tight bound flickers under load and reads as a fix that broke.
+
+Run each test file with the single-file command you were given (`red.test_command`), not the
+project's whole suite.
+
 ## Output
 
 Return exactly this:

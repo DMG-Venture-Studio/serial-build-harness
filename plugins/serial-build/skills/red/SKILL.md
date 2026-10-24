@@ -14,6 +14,12 @@ breaker: you brief it, isolate it, verify it, and record.
 
 Scripts are under `${CLAUDE_PLUGIN_ROOT}/scripts`; run them with `sh` from the project root.
 
+Run this skill in a fresh session (after `/clear`, or a new or forked one), never in the builder's.
+Every orchestration step re-reads the session's whole context, so in a builder session hundreds
+of thousands of tokens deep the orchestration costs as much as the breaker. A fresh session also
+keeps the builder's reasoning away from the brief. If this session already holds the build, say so
+and tell the owner: "next: `/clear`, then `/serial-build:red`".
+
 ## 1. Preconditions
 
 - `.claude/serial-build.json` has `red.test_paths`, which tells a test from the code under test.
@@ -45,8 +51,11 @@ work:
 - the gate slug, its Builds, Demo (with the Break it: step), QA, Proof, and Acceptance, from
   `docs/plan.md` and `docs/roadmap.md`;
 - the plan's "Tried to break" list: the attacks it must attempt at minimum;
-- the test paths it may write (`red.test_paths`) and the test commands from the config's
-  `checks.on_stop` rules and CLAUDE.md;
+- the test paths it may write (`red.test_paths`) and the command to run one test file:
+  `red.test_command` from the config, with `{file}` standing for the file (for example
+  `uv run pytest {file} -q -p no:cacheprovider`). Without it, the test commands from CLAUDE.md;
+  never the `checks.on_stop` suite, which costs minutes per run and which the commit hooks run
+  anyway;
 - the instruction that it did not build this and must not trust any claim that it works.
 
 A hook fences it while it runs (writes outside the test paths and git commands other than
@@ -118,6 +127,21 @@ Then run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh"`. Its record checks m
 section, commit, and rerun until they do); its findings are expected to be OPEN until the builder
 fixes them.
 
+## After the fixes: the delta run
+
+Once the builder has fixed the findings, run this skill again as a delta run before the handoff
+(a run with no findings needs none).
+A fix often moves the bug one step over, and a fixed finding is otherwise only re-tested, never
+attacked. Steps 2 to 9 are the same; the brief differs:
+
+- the fix commits (`git log --oneline <the Red commit>..HEAD`) and the findings they close;
+- "attack the fixes and their neighbours": inputs one step from each fixed case, the same bug
+  through another path, and what the fix itself made newly possible;
+- the plan's "Tried to break" list is not re-run; its minimum was met by the first run, so the
+  delta run's declared attempts may be fewer than the list.
+
+It records its own `Red run:` block, as any later run does.
+
 ## When a finding is wrong, or its test must change
 
 - **Wrong finding** (the test asserts something the product should not do): only the owner decides,
@@ -140,3 +164,8 @@ Consequence first, to the owner: how many attacks, what broke and what that woul
 a user, and the next step, which is the builder fixing each finding (a fix is ordinary product
 code; the red lane never writes it). Quote the last line of `red-status.sh`: the gate cannot
 hand off until it says clear.
+
+End with the next command, to run after `/clear` or in a new session: with findings, "next:
+`/clear`, then fix the red findings in `docs/plan.md`, then `/clear` and `/serial-build:red` for
+the delta run"; after a delta run with none open, "next: `/clear`, then
+`/serial-build:demo-brief`".

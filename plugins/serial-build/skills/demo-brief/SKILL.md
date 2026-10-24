@@ -11,6 +11,23 @@ does. A brief that tells them the wrong thing to expect is worse than no brief, 
 it (a URL, a command, an input, an expected output, a count) comes from running something or
 reading the project's data now, not from memory of the session.
 
+## When it runs
+
+Twice per gate, and the second run is cheap:
+
+- **Draft, before red.** The plan's demo task (it sits before the red task) runs the demo end to
+  end, writes the brief under `## Demo brief` in `docs/plan.md`, and fixes what the run shows.
+  This is where the bugs that stop a demo surface, while fixing them still costs one commit and
+  not another red round. Stop the dev stack and every process it started afterwards: the red
+  guard watches ignored files, and a daemon still writing into the project voids the red run.
+- **Refresh, after red is clear.** Re-run only the commands the drafted brief states, so every
+  fact is computed now, and update any fact that moved. The brief the owner reads is this
+  refreshed one. If there is no drafted brief, do the steps below in full.
+
+In `docs/plan.md` the brief goes after the plan's top block and before `## Red`. No line of it
+starts with `Proof`, `Manual:`, `Tried to break`, or `Acceptance:`; those lines belong to the top
+block, which the scripts read.
+
 ## Steps
 
 1. Read the gate's Demo, Tried to break, and Acceptance from `docs/plan.md` or
@@ -37,3 +54,10 @@ moves the gate; into `docs/plan.md` as an "Ask first:" line until then. If their
 question, it becomes an open question through `/serial-build:intake`. If their break step broke
 it, that is a red finding: write the failing test through `/serial-build:red`. Never paraphrase a
 verdict into a stronger claim than the owner made.
+
+## Next
+
+After the refresh, the owner runs the demo. The next command is `/serial-build:handoff`, in this
+same session: the owner's acceptance words are in it, and handoff ships only on words the owner
+said in the session that runs it. This is the one step that does not start fresh, and the
+session is small, since it began at the refresh.

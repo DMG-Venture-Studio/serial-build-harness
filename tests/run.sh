@@ -430,11 +430,14 @@ printf 'exit 0\n' > "$proj/tests/check.sh"
 # A gate whose text holds a fenced "# comment" and a prose "Later," line (review item 8).
 awk '{ print } /^Builds: The `tally` command/ { print ""; print "```"; print "# an example comment, not a heading"; print "```"; print ""; print "Later, it may read a second account." }' "$proj/docs/roadmap.md" > "$WORK/r" && cp "$WORK/r" "$proj/docs/roadmap.md"
 printf '\nSee `nowhere` for more.\n' >> "$proj/docs/design.md"
+# A demo brief drafted into the plan before red (issue 8) holds lines that look like the top block's.
+awk '/^## Red$/ { print "## Demo brief"; print ""; print "Proof that it runs:"; print ""; print "    false"; print ""; print "Tried to break it yourself:"; print "- one"; print "- two"; print "- three"; print "" } { print }' "$proj/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$proj/docs/plan.md"
 ship match-one-month --accepted "It found my two missing transactions."
 expect "ship-gate ships, and exits 0 even when the canon check after it fails (review item 9)" 0 "the gate shipped, but the canon check above fails"
 sed '/See `nowhere`/d' "$proj/docs/design.md" > "$WORK/d" && cp "$WORK/d" "$proj/docs/design.md"
 check "no text of the shipped gate is left in the roadmap (review item 8)" '! grep -q "an example comment" "$proj/docs/roadmap.md" && ! grep -q "Later, it may read" "$proj/docs/roadmap.md" && grep -q "^- two-accounts:" "$proj/docs/roadmap.md"'
 check "the done entry names each finding by its whole description, not cut at \"e.g.\" (live run)" 'grep -q "red-empty-statement (an empty statement (e.g. a header-only export) crashes instead of being refused)" "$proj/docs/done.md"'
+check "a demo brief in the plan adds no proof command and no Tried to break bullets (issue 8)" '! grep -q "^    false" "$proj/docs/done.md"'
 check "the done entry carries proof, the red test, what was tried, and the owner's words" 'grep -q "^    sh tests/check.sh" "$proj/docs/done.md" && grep -q "^    sh tests/red_empty.sh" "$proj/docs/done.md" && grep -q "^Tried to break: 2 attempts by the red lane" "$proj/docs/done.md" && grep -q "^Accepted: \"It found my two missing transactions.\"" "$proj/docs/done.md"'
 check "the plan is deleted and the gate left the roadmap" '[ ! -f "$proj/docs/plan.md" ] && ! grep -q "^### match-one-month" "$proj/docs/roadmap.md"'
 check "ship-gate listed the unticked task" 'printf "%s" "$out" | grep -q "Colour the output"'
@@ -505,10 +508,24 @@ sed 's/"version": 1,/"version": 1, "enabled": false,/' "$WORK/good.json" > "$pro
 hook "$proj" guard-generated.sh "$(write_input "$proj/src/tally/_version.py")"; silent "enabled: false switches the guard off"
 hook "$proj" session-start.sh '{"session_id":"s3"}'; silent "enabled: false silences session start"
 
+printf '{"version":1,"owner":{"name":"Ada"},"red":{"test_paths":["tests/**"],"test_command":"sh {file}"}}' > "$WORK/tc.json"
+script "$proj" check-config.sh "$WORK/tc.json"
+expect "check-config names the red lane's single-file test command (issue 3)" 0 'runs one test file with `sh {file}`'
+printf '{"version":1,"owner":{"name":"Ada"},"red":{"test_paths":["tests/**"],"test_command":"make test"}}' > "$WORK/tc.json"
+script "$proj" check-config.sh "$WORK/tc.json"
+expect "check-config warns when red.test_command has no {file} (issue 3)" 0 'has no {file}'
+
 echo "-- the skills and agents say what the scripts cannot enforce"
 check "/red demotes only on the owner's answer to AskUserQuestion, passed verbatim (third review, item 2)" 'grep -q "Ask the owner with AskUserQuestion" "$P/skills/red/SKILL.md" && grep -q "their answer, verbatim" "$P/skills/red/SKILL.md" && grep -q "never this session on its own judgement" "$P/skills/red/SKILL.md"'
 check "README says the demotion check stops accidents, not a determined forger (third review, item 2)" 'grep -q "not a determined forger" "$REPO/README.md"'
 check "the breaker is told to write tests with the Write tool, not shell redirects (third review, item 4)" 'grep -q "Write each test file with the Write tool, never a Bash heredoc or redirect" "$P/agents/red-breaker.md"'
+check "intake commits, then summarises, and waits only for glossary entries and contradictions (issue 9)" 'grep -q "Stop and wait before committing in exactly two cases" "$P/skills/intake/SKILL.md" && ! grep -q "Commit on approval" "$P/skills/intake/SKILL.md"'
+check "gate steps 2 to 4 never ask the owner (issue 9)" 'grep -q "Steps 2 to 4 never call AskUserQuestion" "$P/skills/gate/SKILL.md"'
+check "the gate template runs the demo before the red task (issue 8)" 'awk "/Run the demo end to end/ { d = NR } /Run \/serial-build:red on this gate/ { r = NR } END { exit !(d && r && d < r) }" "$P/skills/gate/SKILL.md"'
+check "the red skill runs from a fresh session and has a post-fix delta run (issues 2, 3)" 'grep -q "Run this skill in a fresh session" "$P/skills/red/SKILL.md" && grep -q "## After the fixes: the delta run" "$P/skills/red/SKILL.md"'
+check "the breaker carries the rules against re-pins (issue 3)" 'grep -q "One finding per test file" "$P/agents/red-breaker.md" && grep -q "at least 5x the measured latency" "$P/agents/red-breaker.md"'
+missing_next=$(for k in gate intake red demo-brief handoff; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
+check "every step names the next command (issue 6)" '[ -z "$missing_next" ] && grep -q "next: \`/clear\`" "$P/skills/gate/SKILL.md"' "$missing_next"
 
 echo "-- the README"
 fields=$(grep -o '^| `[a-z_.]*`' "$P/skills/scope/references/config.md" | tr -d '|` ')

@@ -46,6 +46,9 @@ Acceptance: <what the owner does on the running product, and the sentence they c
 
 - [ ] <task>
 - [ ] ...
+- [ ] Run the demo end to end on the running product, including its Break it: step, draft the
+      demo brief into this plan under `## Demo brief`, and fix what the run shows. Stop the dev
+      stack and every process it started before the next task.
 - [ ] Run /serial-build:red on this gate and fix every red finding it reproduces.
 
 Proof (the commands done will re-run; each must pass before the gate ships):
@@ -66,7 +69,18 @@ New open questions (written to docs/open.md on approval):
 
 Tasks only. Plan mode cannot write files, so a design question that comes up is drafted in the
 "New open questions" list (what it is, why it matters, a recommendation) and referenced from the
-task by its slug instead of being resolved inline; step 5 writes it to `docs/open.md`. Every QA
+task by its slug instead of being resolved inline; step 5 writes it to `docs/open.md`.
+
+Steps 2 to 4 never call AskUserQuestion; the owner reads the plan once, at step 5. A "Decide by
+proof" item goes to the reviewer in step 4 to measure, and its measured answer is folded in. A
+genuine design question goes to the "New open questions" list.
+
+The demo task sits before the red task on purpose. Running the demo is what finds the bugs that
+stop a demo (a command that does not start, a stale pid file, a refusal that is not an error), and
+fixing them before red means the red lane attacks code that has already survived a real run.
+After red is clear, `/serial-build:demo-brief` re-runs only the brief's commands to refresh its
+facts. The demo cannot run while the red lane runs: the dev stack writes ignored files the red
+guard watches, which would void the run. Every QA
 line in the gate becomes a task and a command in the Proof block, because the ship-gate script
 runs those commands before the gate can ship and `docs/done.md` re-runs them at every handoff.
 Use `Manual:` followed by the steps only for what no command can show.
@@ -94,6 +108,9 @@ its consequence. When the owner approves, write the approved draft verbatim to `
 question to `docs/open.md` under its slug, and run
 `sh "${CLAUDE_PLUGIN_ROOT}/scripts/check-canon.sh"`, fixing each FAIL.
 Commit it per the project's commit policy, as "Plan: <gate-slug>, <what it builds>".
+
+Then name the next step in one line, to run after `/clear` or in a new session, since the plan
+holds everything the builder needs: "next: `/clear`, then build `docs/plan.md`".
 
 ## When the gate ships
 

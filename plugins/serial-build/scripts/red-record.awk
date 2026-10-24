@@ -25,7 +25,8 @@ function flush(   slug) {
   bullet = ""
 }
 
-/^Tried to break/ && !inred { tried = 1; next }
+/^## / { body = 1 }
+/^Tried to break/ && !body { tried = 1; next }
 tried && /^- / { T++; next }
 tried { tried = 0 }
 
