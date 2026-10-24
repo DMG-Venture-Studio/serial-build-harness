@@ -6,20 +6,32 @@
 # .git every worktree shares, are exactly as they were.
 #
 #   snapshot  refuses unless the project's work is committed (the worktree is cut
-#             from the last commit, so uncommitted work would go unattacked), then
-#             records the commit, a checksum of every ignored file in the project
-#             (a planted .env or sitecustomize.py hides there), and of .git's
-#             config, info/exclude, info/attributes, and hooks (a planted
-#             post-commit hook or exclude rule hides there).
+#             from the last commit, so uncommitted work would go unattacked), and
+#             unless no watched ignored file was modified in the last two minutes
+#             (something still writing into the project, such as a dev-stack
+#             daemon's log, would void the run; it is named so it can be stopped
+#             first). Then records the commit, a checksum of every ignored file in
+#             the project (a planted .env or sitecustomize.py hides there), and of
+#             .git's config, info/exclude, info/attributes, and hooks (a planted
+#             post-commit hook or exclude rule hides there), and takes the red
+#             lock: the red-lock hook refuses every agent but the red-breaker
+#             writes into the project until verify or abort.
 #   verify    fails, voiding the red run, when the commit moved, any shared .git
 #             file changed, any file outside red.test_paths changed, or an ignored
 #             file appeared, changed, or vanished. Test files that changed are
-#             listed after "tests:".
+#             listed after "tests:". Releases the red lock either way.
+#   abort     voids the run in progress and releases the red lock, for a run
+#             that hung or a lock a crashed session left behind.
+#
+# .git/config is compared by its settings, not its bytes, with core.hooksPath
+# resolved to an absolute path: Claude Code's worktree creation rewrites a
+# relative hooksPath as the same folder's absolute path, which is no change.
+# SB_RED_QUIET_MINUTES sets the preflight's window (default 2; 0 turns it off).
 #
 # The project may be a subfolder of a larger repository. Residual gap: a file
 # inside an ignored folder (node_modules/) that is modified and then back-dated
 # with touch. The worktree isolation, not this check, keeps that from the project.
-# Usage: red-guard.sh snapshot | verify    (from the project root)
+# Usage: red-guard.sh snapshot | verify | abort    (from the project root)
 set -u
 SB_PLUGIN=$(cd "$(dirname "$0")/.." && pwd)
 . "$SB_PLUGIN/scripts/lib.sh"
@@ -40,7 +52,29 @@ snap="$state/red-snapshot"
 marker="$state/red-snapshot.time"
 common=$(cd "$(git rev-parse --git-common-dir)" && pwd -P)
 
+lock=$(sb_red_lock)
+mkdir -p "$(dirname "$lock")"
 head_of() { git rev-parse -q --verify HEAD 2>/dev/null || echo none; }
+top=$(git rev-parse --show-toplevel)
+
+# config_sig: .git/config's settings, with a relative core.hooksPath resolved
+# against the main checkout's top, where hooks run; its bytes if git cannot read it.
+config_sig() {
+  if _list=$(git config --file "$common/config" --list 2>/dev/null); then
+    printf '%s\n' "$_list" | while IFS= read -r _l; do
+      case "$_l" in
+        core.hookspath=*)
+          _v=${_l#core.hookspath=}
+          case "$_v" in /*) ;; *) _v="$top/$_v" ;; esac
+          [ -d "$_v" ] && _v=$(cd "$_v" && pwd -P)
+          printf 'core.hookspath=%s\n' "${_v%/}" ;;
+        *) printf '%s\n' "$_l" ;;
+      esac
+    done | sb_hash
+  else
+    sb_sum "$common/config"
+  fi
+}
 
 # Folders Claude Code symlinks into every worktree (worktree.symlinkDirectories
 # in .claude/settings.json, such as node_modules): the breaker's test runs write
@@ -63,7 +97,8 @@ shared_out() {
 
 # One line per watched thing: kind<TAB>signature<TAB>name.
 inventory() {
-  for f in config info/exclude info/attributes; do printf 'git\t%s\t%s\n' "$(sb_sum "$common/$f")" "$f"; done
+  printf 'git\t%s\tconfig\n' "$(config_sig)"
+  for f in info/exclude info/attributes; do printf 'git\t%s\t%s\n' "$(sb_sum "$common/$f")" "$f"; done
   if [ -d "$common/hooks" ]; then
     (cd "$common/hooks" && find . -type f | LC_ALL=C sort) | while IFS= read -r f; do
       printf 'git\t%s\thooks/%s\n' "$(sb_sum "$common/hooks/$f")" "${f#./}"
@@ -80,17 +115,38 @@ inventory() {
 
 case "$mode" in
   snapshot)
+    if [ -f "$lock" ]; then
+      echo "red-guard: a red run already holds the red lock; finish it (red-file.sh, or red-guard.sh verify) or void it with red-guard.sh abort before a new snapshot, or what was written in between would never be checked" >&2
+      exit 1
+    fi
     dirty=$(sb_changed_files)
     if [ -n "$dirty" ]; then
       printf 'red-guard: commit the gate'"'"'s work first. The red-breaker agent attacks a worktree cut from the last commit, so these uncommitted changes would go unattacked:\n%s\n' "$dirty" >&2
       exit 1
     fi
+    quiet=${SB_RED_QUIET_MINUTES:-2}
+    if [ "$quiet" -gt 0 ] 2>/dev/null; then
+      busy=$(inventory | awk -F '\t' '$1 == "ignored" || $1 == "dir" { print $3 }' | while IFS= read -r f; do
+        find "./$f" -type f -mmin "-$quiet" 2>/dev/null | head -n 3
+      done | sed 's|^\./||' | head -n 10)
+      if [ -n "$busy" ]; then
+        printf 'red-guard: something is still writing into the project; stop it first (a dev server, a daemon, a watcher, another session) or wait until nothing has written for that long, then snapshot again. Modified in the last %s minutes:\n%s\n' "$quiet" "$busy" >&2
+        exit 1
+      fi
+    fi
     { head_of; inventory; } > "$snap"
     : > "$marker"
+    printf '%s\n' "$(head -n 1 "$snap")" > "$lock"
     echo "red-guard: snapshot at $(head -n 1 "$snap"), $(($(wc -l < "$snap") - 1)) watched files and folders"
+    echo "red-guard: the red lock is held; until verify (or abort), only the red-breaker agent may write into the project."
+    ;;
+  abort)
+    rm -f "$lock" "$snap" "$marker"
+    echo "red-guard: the red run is void and the red lock is released; take a new snapshot before the next run."
     ;;
   verify)
     [ -f "$snap" ] || { echo "red-guard: no snapshot; run 'red-guard.sh snapshot' before the red-breaker agent" >&2; exit 1; }
+    rm -f "$lock"
     problems=
     was=$(head -n 1 "$snap")
     now=$(head_of)
@@ -124,7 +180,7 @@ case "$mode" in
     echo
     ;;
   *)
-    echo "usage: red-guard.sh snapshot | verify" >&2
+    echo "usage: red-guard.sh snapshot | verify | abort" >&2
     exit 2
     ;;
 esac

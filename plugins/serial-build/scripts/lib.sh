@@ -118,6 +118,18 @@ sb_state_dir() {
   printf '%s\n' "$_sb_dir"
 }
 
+# The red lock's marker, for SB_ROOT. It lives in the repository's shared .git
+# (in a folder red-guard.sh does not watch), not the temp folder, because it is
+# written by a script the session runs and read by a hook, and the two need not
+# see the same TMPDIR. Keyed by the project's physical path, so another worktree
+# of the same repository (a plan drafted ahead) is not locked. Status 1 outside git.
+sb_red_lock() {
+  _sb_c=$(cd "$SB_ROOT" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) || return 1
+  [ -n "$_sb_c" ] || return 1
+  _sb_k=$(cd "$SB_ROOT" && pwd -P | cksum | awk '{print $1}')
+  printf '%s/serial-build/red-lock-%s\n' "$_sb_c" "$_sb_k"
+}
+
 # sb_hash: a short checksum of stdin.
 sb_hash() {
   cksum | awk '{print $1 "-" $2}'

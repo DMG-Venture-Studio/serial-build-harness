@@ -16,12 +16,47 @@ and what blocks it; never design opinions, alternatives, or estimates.
 Read the gate in `docs/roadmap.md`: the first `###` gate, written out with every section. If
 the roadmap has only one-line gates in a Later list left, the next one is written out in full
 through `/serial-build:intake` first; a one-line gate is not plannable. If `docs/plan.md`
-exists, stop and ask whether to finish, regenerate, or retire it first. There is never more than
-one active plan.
+exists, there is an active plan: say so, and offer to draft the next written-out gate ahead
+instead (below). Never write a second `docs/plan.md`.
+
+Scripts are under `${CLAUDE_PLUGIN_ROOT}/scripts`; run them with `sh` from the project root.
+
+**A draft is waiting.** Run `plan-draft.sh status <gate-slug>`. When it says a draft is saved, the
+drafting and its review passes are done; check what moved since with
+`plan-draft.sh delta <gate-slug>`:
+
+- exit 0, nothing it depends on changed: call EnterPlanMode, read the draft with
+  `plan-draft.sh take <gate-slug>`, and go to step 5 with it;
+- exit 3, something changed (a file its tasks name, its roadmap section, a decision record, an
+  open question): call EnterPlanMode, take the draft, and run one adversarial review pass on the
+  change only (step 4's brief, given the draft and the delta's list), fold what it finds, then go
+  to step 5.
+
+After step 5 writes `docs/plan.md`, run `plan-draft.sh drop <gate-slug>`. A draft that status
+says is still in progress is a draft session that has not finished; say so and wait, or drop it
+and plan from scratch.
+
+**Drafting ahead (`--draft <gate-slug>`).** Planning need not wait for the active gate to ship.
+While gate N is in red, demo, or handoff, draft gate N+1, the next written-out roadmap gate after
+the active one:
+
+1. From the project, `plan-draft.sh start <gate-slug>` cuts a branch and a worktree outside the
+   project and prints the command that launches the draft session there in the background. A
+   session outside the project folder cannot void a red run or hit the red lock.
+2. In that session ("$ARGUMENTS" is `--draft <gate-slug>`): skip the rest of step 1 entirely
+   (the plan there is gate N's, and the draft's status reads "in progress" because this session
+   is the one making it). Run steps 2 to 4 for the named gate without plan mode (nobody is
+   there to approve, and the worktree is not the project), writing the draft to `docs/plan.md`
+   in the worktree. Then run `plan-draft.sh save <gate-slug>`, which commits it on the draft's
+   branch with the commit it was reviewed against. Never call ExitPlanMode or ask the owner; end
+   with one line naming the gate and the review result.
+
+The owner approves a draft only when this skill takes it, as above, in the same sitting as gate
+N's demo or right after.
 
 ## 2. Read mechanically, in plan mode
 
-Call EnterPlanMode. Read by rule, not by judgment:
+Call EnterPlanMode (not when drafting ahead). Read by rule, not by judgment:
 
 - every decision record the gate names by slug in its Decided and Decide by proof sections
   (`docs/decisions/*-<slug>.md`);
@@ -46,6 +81,9 @@ Acceptance: <what the owner does on the running product, and the sentence they c
 
 - [ ] <task>
 - [ ] ...
+- [ ] Run the demo end to end on the running product, including its Break it: step, draft the
+      demo brief into this plan under `## Demo brief`, and fix what the run shows. Stop the dev
+      stack and every process it started before the next task.
 - [ ] Run /serial-build:red on this gate and fix every red finding it reproduces.
 
 Proof (the commands done will re-run; each must pass before the gate ships):
@@ -66,7 +104,18 @@ New open questions (written to docs/open.md on approval):
 
 Tasks only. Plan mode cannot write files, so a design question that comes up is drafted in the
 "New open questions" list (what it is, why it matters, a recommendation) and referenced from the
-task by its slug instead of being resolved inline; step 5 writes it to `docs/open.md`. Every QA
+task by its slug instead of being resolved inline; step 5 writes it to `docs/open.md`.
+
+Steps 2 to 4 never call AskUserQuestion; the owner reads the plan once, at step 5. A "Decide by
+proof" item goes to the reviewer in step 4 to measure, and its measured answer is folded in. A
+genuine design question goes to the "New open questions" list.
+
+The demo task sits before the red task on purpose. Running the demo is what finds the bugs that
+stop a demo (a command that does not start, a stale pid file, a refusal that is not an error), and
+fixing them before red means the red lane attacks code that has already survived a real run.
+After red is clear, `/serial-build:demo-brief` re-runs only the brief's commands to refresh its
+facts. The demo cannot run while the red lane runs: the dev stack writes ignored files the red
+guard watches, which would void the run. Every QA
 line in the gate becomes a task and a command in the Proof block, because the ship-gate script
 runs those commands before the gate can ship and `docs/done.md` re-runs them at every handoff.
 Use `Manual:` followed by the steps only for what no command can show.
@@ -94,6 +143,9 @@ its consequence. When the owner approves, write the approved draft verbatim to `
 question to `docs/open.md` under its slug, and run
 `sh "${CLAUDE_PLUGIN_ROOT}/scripts/check-canon.sh"`, fixing each FAIL.
 Commit it per the project's commit policy, as "Plan: <gate-slug>, <what it builds>".
+
+Then name the next step in one line, to run after `/clear` or in a new session, since the plan
+holds everything the builder needs: "next: `/clear`, then build `docs/plan.md`".
 
 ## When the gate ships
 

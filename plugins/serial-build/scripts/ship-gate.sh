@@ -23,6 +23,19 @@
 #     roadmap as a regression gate, files the failing output and the old entry
 #     under the decision sources, and only then removes its done entry.
 #
+#   ship-gate.sh --retire-proof <gate-slug> "<proof command>" --decision <slug> --owner-said "<words>"
+#     Removes one command from a shipped gate's Proof block, so the handoff stops
+#     re-running a proof that became redundant or moved to a schedule. Refuses
+#     unless: the entry is as ship-gate wrote it; the command is in its Proof
+#     block and is not the last one; it passes now (a failing proof is a
+#     regression, never a retirement); a committed decision record
+#     docs/decisions/*-<slug>.md says why, and names every test file the command
+#     runs (so a red finding's test is retired only where the record says what
+#     still runs it); and the owner's words are given. Files the old entry under
+#     the decision sources, adds a "Retired:" line citing the record and the
+#     owner's words, writes the entry's new checksum, and commits as
+#     "serial-build: retire proof <gate-slug>".
+#
 # The owner's acceptance and demotions are their acts; this script only records
 # them. Pass words they actually said, never a paraphrase. Run from the project root.
 set -u
@@ -127,6 +140,65 @@ EOF
   exit 0
 fi
 
+if [ "${1:-}" = --retire-proof ]; then
+  slug=${2:-} cmd=${3:-}
+  [ -n "$slug" ] && [ -n "$cmd" ] && [ "${4:-}" = --decision ] && [ -n "${5:-}" ] && [ "${6:-}" = --owner-said ] && [ -n "${7:-}" ] \
+    || refuse 'usage: ship-gate.sh --retire-proof <gate-slug> "<proof command>" --decision <decision-slug> --owner-said "<the owner'"'"'s words, verbatim>"'
+  dec=$5 said=$7
+  [ -f "$done" ] && grep -qx "## $slug" "$done" || refuse "docs/done.md has no entry \"## $slug\""
+  record=$(ls docs/decisions/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-"$dec".md 2>/dev/null | head -n 1)
+  [ -n "$record" ] || refuse "no decision record docs/decisions/<date>-$dec.md; a proof is retired only for a reason the owner can read, so record the decision first (through /serial-build:intake)"
+  git ls-files --error-unmatch -- "$record" >/dev/null 2>&1 && git diff --quiet HEAD -- "$record" \
+    || refuse "$record is not committed as it stands; a retirement cites a record the history holds"
+  # The entry as check-canon.sh reads it: from its heading to its checksum line,
+  # blank lines kept only between text.
+  entry=$(awk -v h="## $slug" '
+    $0 == h { on = 1; print; next }
+    on && /^<!-- ship-gate [0-9-]+ -->$/ { exit }
+    on && !NF { held = held "\n"; next }
+    on { printf "%s%s\n", held, $0; held = "" }' "$done")
+  sum=$(awk -v h="## $slug" '$0 == h { on = 1; next } on && /^<!-- ship-gate [0-9-]+ -->$/ { print $3; exit } on && /^## / { exit }' "$done")
+  [ -n "$sum" ] && [ "$(printf '%s\n' "$entry" | cksum | awk '{print $1 "-" $2}')" = "$sum" ] \
+    || refuse "the done entry $slug is not as ship-gate.sh wrote it, so nothing is retired from it; that is the owner's call"
+  proof=$(printf '%s\n' "$entry" | awk '/^Proof:/ { on = 1; next } on && /^    / { print substr($0, 5); next } on && NF { exit }')
+  printf '%s\n' "$proof" | grep -qxF -- "$cmd" || refuse "the Proof block of $slug has no command \"$cmd\"; give it exactly as listed"
+  [ "$(printf '%s\n' "$proof" | grep -c .)" -gt 1 ] || refuse "\"$cmd\" is the last proof of $slug; a shipped gate keeps at least one proof the handoff re-runs"
+  if sb_load_config && [ "$(sb_count "$SB_CFG" red.test_paths)" -gt 0 ]; then
+    set -f
+    for w in $cmd; do
+      w=${w%%::*}
+      [ -f "$w" ] || continue
+      if printf '%s\n' "$w" | sb_filter "$SB_CFG" red.test_paths | grep -q . && ! grep -qF -- "$w" "$record"; then
+        refuse "\"$cmd\" runs the test $w, and $record does not name it; say in the record which proof still runs it, or that it is retired on purpose"
+      fi
+    done
+    set +f
+  fi
+  if ! (sh -c "$cmd") > /dev/null 2>&1; then
+    refuse "\"$cmd\" fails now, so $slug has regressed; a failing proof is never retired. Move the gate back with: ship-gate.sh --regress $slug --failed \"<the failing output>\""
+  fi
+  newf=$(mktemp "${TMPDIR:-/tmp}/sb-retire.XXXXXX") || exit 1
+  trap 'rm -f "$newf" "$done.sb-tmp"' EXIT
+  printf '%s\n' "$entry" | CMD=$cmd SAID=$said awk -v add="Retired: \`$cmd\` from the proof. See \`$dec\`. The owner said: " '
+    BEGIN { add = add "\"" ENVIRON["SAID"] "\"" }
+    /^Proof:/ { on = 1 } on && $0 == "    " ENVIRON["CMD"] && !gone { gone = 1; next } on && NF && !/^    / && !/^Proof:/ { on = 0 }
+    /^Accepted: / && !put { print add; print ""; put = 1 }
+    { print }' > "$newf"
+  newsum=$(cksum < "$newf" | awk '{print $1 "-" $2}')
+  src="retired-$slug-$today" k=1
+  while [ -e "docs/decisions/sources/$src.md" ]; do k=$((k + 1)); src="retired-$slug-$today-$k"; done
+  mkdir -p docs/decisions/sources
+  printf '# Source: a proof of %s retired\n\nRecorded %s by ship-gate.sh --retire-proof. Retired: `%s`. Why: See `%s`. The done entry as it stood, verbatim.\n\n---\n\n%s\n' "$slug" "$today" "$cmd" "$dec" "$entry" > "docs/decisions/sources/$src.md"
+  awk -v h="## $slug" -v f="$newf" -v mark="<!-- ship-gate $newsum -->" '
+    $0 == h { while ((getline l < f) > 0) print l; print ""; print mark; skip = 1; next }
+    skip && /^<!-- ship-gate [0-9-]+ -->$/ { skip = 0; next }
+    !skip' "$done" > "$done.sb-tmp" && mv "$done.sb-tmp" "$done"
+  git add -- "$done" "docs/decisions/sources/$src.md" && git commit -q -m "serial-build: retire proof $slug" -- "$done" "docs/decisions/sources/$src.md" \
+    || refuse "the entry is rewritten but could not be committed; commit docs/done.md and the source yourself"
+  echo "ship-gate: \`$cmd\` is retired from $slug's proof (See \`$dec\`); the old entry is filed as the decision source $src. The handoff no longer re-runs it."
+  exit 0
+fi
+
 slug=${1:-}
 [ "${2:-}" = --accepted ] && [ -n "${3:-}" ] || refuse 'usage: ship-gate.sh <gate-slug> --accepted "<the owner'"'"'s words, verbatim>"'
 accepted=$3
@@ -134,14 +206,16 @@ accepted=$3
 active=$(awk '/^# /{print substr($0, 3); exit}' "$plan")
 [ "$active" = "$slug" ] || refuse "docs/plan.md is the plan for $active, not $slug"
 
-if ! red=$(sh "$SB_PLUGIN/scripts/red-status.sh" "$SB_ROOT"); then
+if ! red=$(sh "$SB_PLUGIN/scripts/red-status.sh" --fresh "$SB_ROOT"); then
   printf '%s\n' "$red" >&2
   refuse "$slug does not ship while the red lane's record is not clear (above)."
 fi
 printf '%s\n' "$red"
 
-proofs=$(awk '/^Proof/ { on = 1; next } on && /^(    |\t)/ { sub(/^(    |\t)/, ""); print; next } on && NF { on = 0 }' "$plan")
-manual=$(awk '/^Manual:/ { on = 1 } on && !NF { exit } on' "$plan")
+# Only the plan's top block, before its first "## " section (Demo brief, Red), holds
+# the proof; a line in a later section that happens to start with "Proof" is not one.
+proofs=$(awk '/^## / { exit } /^Proof/ { on = 1; next } on && /^(    |\t)/ { sub(/^(    |\t)/, ""); print; next } on && NF { on = 0 }' "$plan")
+manual=$(awk '/^## / { exit } /^Manual:/ { on = 1 } on && !NF { exit } on' "$plan")
 [ -n "$proofs$manual" ] || refuse "docs/plan.md has no Proof block (indented commands under a line starting \"Proof\") and no Manual: line; done needs a proof that can be re-run"
 
 records=$(LC_ALL=C awk -f "$SB_SCRIPTS/red-record.awk" "$plan")
@@ -170,6 +244,9 @@ fi
 attempts=$(rows RUN | awk -F '\t' '{ t += $3 } END { print t + 0 }')
 runs=$(rows RUN | grep -c .)
 sources=$(rows RUN | cut -f 5 | grep -v '^-$' | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+voids=$(rows VOID | grep -c .)
+costs=$( { rows COST | awk -F '\t' '{ print "run " $2 ": " $3 }'
+  rows VOID | cut -f 2 | sed 's/^Voided red run: */voided: /; s/\.$//'; } | awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }')
 join() { awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }'; }
 guarded=$(rows FIND | awk -F '\t' '!seen[$3]++ { b = $6; sub(/^- red-[a-z0-9-]*: /, "", b); sub(/[. ]*Test: `.*/, "", b); print $3 " (" b ")" }' \
   | while IFS= read -r g; do is_demoted "${g%% *}" || printf '%s\n' "$g"; done | join)
@@ -183,7 +260,10 @@ demoted=$(rows DEMOTE | cut -f 3 | sed 's/^Demoted //' | join)
     echo
   fi
   [ -n "$manual" ] && printf '%s\n\n' "$manual"
-  printf 'Tried to break: %s attempts by the red lane over %s run(s), raw output filed as %s; ' "$attempts" "$runs" "${sources:-no source}"
+  printf 'Tried to break: %s attempts by the red lane over %s run(s)' "$attempts" "$runs"
+  [ "$voids" -gt 0 ] && printf ' and %s voided run(s)' "$voids"
+  printf ', raw output filed as %s; ' "${sources:-no source}"
+  [ -n "$costs" ] && printf 'red lane cost: %s; ' "$costs"
   if [ -n "$guarded" ]; then printf 'findings now guarded by the proof above: %s' "$guarded"; else printf 'none found'; fi
   [ -n "$demoted" ] && printf '; demoted by the owner: %s' "$demoted"
   printf '.\n\nAccepted: "%s"\n' "$accepted"

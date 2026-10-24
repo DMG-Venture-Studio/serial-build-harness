@@ -14,6 +14,13 @@ if ! sb_load_config; then
   exit 0
 fi
 
+# A worktree that holds a plan drafted ahead: its plan is the active gate's, not
+# this session's work.
+case "$(git -C "$SB_ROOT" symbolic-ref -q --short HEAD 2>/dev/null)" in serial-build/draft-*)
+  _g=$(git -C "$SB_ROOT" symbolic-ref -q --short HEAD); _g=${_g#serial-build/draft-}
+  printf 'serial-build: this is the worktree where the plan for %s is drafted ahead, outside the project. Its docs/plan.md is the active gate'"'"'s; the work here is /serial-build:gate --draft %s, nothing else.\n' "$_g" "$_g"
+  exit 0 ;;
+esac
 plan="$SB_ROOT/docs/plan.md"
 roadmap="$SB_ROOT/docs/roadmap.md"
 if [ -f "$plan" ]; then
@@ -35,6 +42,9 @@ fi
 
 # A stop check that failed and has not passed since: the next session must know.
 state=$(sb_state_dir)
+if lock=$(sb_red_lock) && [ -f "$lock" ]; then
+  printf 'serial-build: the red lock is held: a red run is in progress, or a session died holding it. Until it is released only the red-breaker agent may write into the project. If no red run is in progress, release it (this voids that run) with: sh "%s/scripts/red-guard.sh" abort\n' "$SB_PLUGIN"
+fi
 for why in "$state"/stop-*.why; do
   [ -f "$why" ] || continue
   stamp=${why%.why}

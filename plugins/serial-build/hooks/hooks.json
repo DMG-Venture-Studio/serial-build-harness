@@ -1,5 +1,5 @@
 {
-  "description": "serial-build: the gate ledger's guards. Every hook exits 0 silently in a project without .claude/serial-build.json; the red fence acts only on the plugin's own red-breaker agent.",
+  "description": "serial-build: the gate ledger's guards. Every hook exits 0 silently in a project without .claude/serial-build.json; the red fence acts only on the plugin's own red-breaker agent, and the red lock only while a red run holds it.",
   "hooks": {
     "SessionStart": [
       {
@@ -29,6 +29,16 @@
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/red-fence.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/red-lock.sh\"",
             "timeout": 10
           }
         ]

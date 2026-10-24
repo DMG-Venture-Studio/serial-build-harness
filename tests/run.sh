@@ -15,10 +15,13 @@ S="$P/scripts"
 FIX="$REPO/tests/fixtures"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/sb-tests.XXXXXX")
 WORK=$(cd "$WORK" && pwd -P)
-trap 'rm -rf "$WORK"' EXIT
+trap '[ -n "${KEEP:-}" ] || rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR"
 unset CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT
+# The snapshot preflight refuses files written in the last two minutes, which is
+# every file here; it is switched back on where it is tested.
+export SB_RED_QUIET_MINUTES=0
 export GIT_AUTHOR_NAME=Ada GIT_AUTHOR_EMAIL=ada@example.com GIT_COMMITTER_NAME=Ada GIT_COMMITTER_EMAIL=ada@example.com
 pass=0 fail=0
 
@@ -301,6 +304,82 @@ check "nothing was copied from a void run" '[ ! -f "$proj/tests/red_two.sh" ]'
 import_case "a deleted test voids the run" 1 "a test, was deleted" 'rm tests/check.sh'
 import_case "a commit in the worktree voids the run" 1 "committed or started elsewhere" 'echo x > tests/x.sh; git add -A; git commit -qm x'
 
+# ---------------------------------------------------------------- red lock and preflight (issue 1)
+echo "-- the red lock and the snapshot preflight: other writers are stopped, not just caught"
+script "$proj" red-guard.sh abort
+export SB_RED_QUIET_MINUTES=2
+echo "log line" > "$proj/.env"
+script "$proj" red-guard.sh snapshot
+expect "the snapshot refuses while an ignored file is still being written, naming it" 1 "something is still writing into the project"
+check "and names the file" 'printf "%s" "$out" | grep -qx ".env"' "$out"
+find "$proj/.env" "$proj/node_modules" -exec touch -t 200001010000 {} +
+script "$proj" red-guard.sh snapshot
+expect "the snapshot proceeds once nothing has written for two minutes" 0 "the red lock is held"
+export SB_RED_QUIET_MINUTES=0
+main_bash() { printf '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }
+hook "$proj" red-lock.sh "$(write_input "$proj/src/tally/core.py")"
+expect "while the lock is held the builder cannot write into the project" 2 "The red lock is held"
+hook "$proj" red-lock.sh "$(write_input "$proj/.claude/worktrees/agent-x/src/a.py")"
+expect "nor into an agent worktree" 2 "red lock is held"
+hook "$proj" red-lock.sh "$(write_input "$WORK/elsewhere/notes.md")"; silent "a write outside the project passes"
+hook "$proj" red-lock.sh "$(red_input Write "\"file_path\":\"$proj/.claude/worktrees/agent-x/tests/t.py\"")"; silent "the red-breaker agent is not locked out"
+hook "$proj" red-lock.sh "$(red_bash "uv run pytest tests/t.py")"; silent "the red-breaker agent may run its tests"
+for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'cat a | tee b' 'find . -name x -delete' 'git checkout -- .' 'sh tests/check.sh' 'make dev' 'git stash' 'ls $(rm -rf src)' 'sh /p/scripts/red-guard.sh verify; rm -rf src' 'rm -rf src /x/scripts/red-guard.sh' 'touch evil /x/scripts/red-file.sh' 'sort -o f a' 'uniq a out' 'date -s 12:00' 'git diff --output=x' 'git log --output=x' 'git -c core.fsmonitor=evil status'; do
+  hook "$proj" red-lock.sh "$(main_bash "$c")"
+  expect "the lock refuses for the builder: $c" 2 "is refused while it is held"
+done
+for c in 'sh /x/scripts/red-file.sh --output /tmp/o.md --cost \"26 min, 1.4M tokens\"' 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'sh \"/x y/scripts/red-pack.sh\" core' 'FOO=1 pwd'; do
+  hook "$proj" red-lock.sh "$(main_bash "$c")"; silent "the lock allows for the builder: $c"
+done
+hook "$proj" session-start.sh '{"session_id":"s4","source":"startup"}'
+expect "session start reports a held lock and how to release it" 0 "the red lock is held"
+check "the lock lives in the shared .git, not the temp folder the hook and the shell may not share (review)" 'ls "$proj"/.git/serial-build/red-lock-* >/dev/null 2>&1'
+(cd "$proj" && TMPDIR="$WORK/othertmp" && mkdir -p "$TMPDIR" && export TMPDIR && printf '%s' "$(write_input "$proj/src/tally/core.py")" | CLAUDE_PROJECT_DIR="$proj" "$SHELL_UNDER_TEST" "$H/red-lock.sh") > /dev/null 2>&1; code=$?
+check "a hook with another TMPDIR still sees the lock" '[ "$code" = 2 ]' "exit $code"
+script "$proj" red-guard.sh verify
+expect "verify passes" 0 "nothing but tests changed"
+hook "$proj" red-lock.sh "$(write_input "$proj/src/tally/core.py")"; silent "verify releases the lock"
+script "$proj" red-guard.sh snapshot
+script "$proj" red-guard.sh snapshot
+expect "a second snapshot is refused while a run holds the lock" 1 "already holds the red lock"
+script "$proj" red-guard.sh abort
+expect "abort voids the run" 0 "the red lock is released"
+hook "$proj" red-lock.sh "$(write_input "$proj/src/tally/core.py")"; silent "abort releases the lock"
+script "$proj" red-guard.sh verify
+expect "abort drops the snapshot, so the aborted run cannot be verified" 1 "no snapshot"
+hook "$bare" red-lock.sh "$(write_input "$bare/src/app.py")"; silent "the lock is silent without config"
+rm -f "$proj/.env"
+
+echo "-- red-guard compares .git/config by its settings (issue 1)"
+git -C "$proj" config core.hooksPath .githooks
+guard_case "a relative core.hooksPath rewritten as the same absolute folder is no change" OK 'git -C "$proj" config core.hooksPath "$proj/.githooks"' 'git -C "$proj" config core.hooksPath .githooks'
+guard_case "a core.hooksPath pointed at another folder voids the run" ".git/config changed" 'git -C "$proj" config core.hooksPath /tmp/planted-hooks' 'git -C "$proj" config core.hooksPath .githooks'
+guard_case "any other config change voids the run" ".git/config changed" 'git -C "$proj" config alias.st status' 'git -C "$proj" config --unset alias.st'
+git -C "$proj" config --unset core.hooksPath
+
+echo "-- salvaging a voided run, and lanes that collide (issues 1, 3)"
+script "$proj" red-guard.sh snapshot
+(cd "$proj" && git worktree add -q --detach "$wt" HEAD) && echo "exit 1" > "$wt/tests/red_salvage.sh" && echo planted >> "$wt/src/tally/core.py"
+script "$proj" red-import.sh "$wt" --quarantine "$proj/q"
+expect "the quarantine folder must be outside the project" 1 "must be outside the project"
+script "$proj" red-import.sh "$wt" --quarantine "$WORK/quarantine" --remove
+expect "a voided run's tests are quarantined, not imported" 0 "quarantined, not imported"
+check "only the test is salvaged, into the quarantine, and nothing reaches the project" '[ -f "$WORK/quarantine/agent-sim/tests/red_salvage.sh" ] && [ ! -e "$WORK/quarantine/agent-sim/src/tally/core.py" ] && [ ! -e "$proj/tests/red_salvage.sh" ] && [ ! -d "$wt" ]'
+wt2="$proj/.claude/worktrees/agent-two"
+script "$proj" red-guard.sh snapshot
+(cd "$proj" && git worktree add -q --detach "$wt" HEAD && git worktree add -q --detach "$wt2" HEAD)
+echo "exit 1" > "$wt/tests/red_lane_a.sh"; echo "exit 1" > "$wt2/tests/red_lane_b.sh"
+script "$proj" red-import.sh "$wt" "$wt2"
+expect "two lanes' tests come home in one import" 0 "tests/red_lane_b.sh"
+check "both are in the project" '[ -f "$proj/tests/red_lane_a.sh" ] && [ -f "$proj/tests/red_lane_b.sh" ]'
+rm -f "$proj/tests/red_lane_a.sh" "$proj/tests/red_lane_b.sh"
+echo "exit 1" > "$wt2/tests/red_lane_a.sh"
+script "$proj" red-import.sh "$wt" "$wt2" --remove
+expect "two lanes writing the same test file void the run, copying nothing" 1 "written by two lanes"
+check "nothing was copied from the collision" '[ ! -f "$proj/tests/red_lane_a.sh" ] && [ ! -f "$proj/tests/red_lane_b.sh" ]'
+(cd "$proj" && git worktree remove --force "$wt" && git worktree remove --force "$wt2")
+script "$proj" red-guard.sh abort
+
 # ---------------------------------------------------------------- red-status
 echo "-- red-status: a finding resolves only by fixing the code"
 cat > "$proj/tests/red_empty.sh" <<'EOF'
@@ -430,11 +509,14 @@ printf 'exit 0\n' > "$proj/tests/check.sh"
 # A gate whose text holds a fenced "# comment" and a prose "Later," line (review item 8).
 awk '{ print } /^Builds: The `tally` command/ { print ""; print "```"; print "# an example comment, not a heading"; print "```"; print ""; print "Later, it may read a second account." }' "$proj/docs/roadmap.md" > "$WORK/r" && cp "$WORK/r" "$proj/docs/roadmap.md"
 printf '\nSee `nowhere` for more.\n' >> "$proj/docs/design.md"
+# A demo brief drafted into the plan before red (issue 8) holds lines that look like the top block's.
+awk '/^## Red$/ { print "## Demo brief"; print ""; print "Proof that it runs:"; print ""; print "    false"; print ""; print "Tried to break it yourself:"; print "- one"; print "- two"; print "- three"; print "" } { print }' "$proj/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$proj/docs/plan.md"
 ship match-one-month --accepted "It found my two missing transactions."
 expect "ship-gate ships, and exits 0 even when the canon check after it fails (review item 9)" 0 "the gate shipped, but the canon check above fails"
 sed '/See `nowhere`/d' "$proj/docs/design.md" > "$WORK/d" && cp "$WORK/d" "$proj/docs/design.md"
 check "no text of the shipped gate is left in the roadmap (review item 8)" '! grep -q "an example comment" "$proj/docs/roadmap.md" && ! grep -q "Later, it may read" "$proj/docs/roadmap.md" && grep -q "^- two-accounts:" "$proj/docs/roadmap.md"'
 check "the done entry names each finding by its whole description, not cut at \"e.g.\" (live run)" 'grep -q "red-empty-statement (an empty statement (e.g. a header-only export) crashes instead of being refused)" "$proj/docs/done.md"'
+check "a demo brief in the plan adds no proof command and no Tried to break bullets (issue 8)" '! grep -q "^    false" "$proj/docs/done.md"'
 check "the done entry carries proof, the red test, what was tried, and the owner's words" 'grep -q "^    sh tests/check.sh" "$proj/docs/done.md" && grep -q "^    sh tests/red_empty.sh" "$proj/docs/done.md" && grep -q "^Tried to break: 2 attempts by the red lane" "$proj/docs/done.md" && grep -q "^Accepted: \"It found my two missing transactions.\"" "$proj/docs/done.md"'
 check "the plan is deleted and the gate left the roadmap" '[ ! -f "$proj/docs/plan.md" ] && ! grep -q "^### match-one-month" "$proj/docs/roadmap.md"'
 check "ship-gate listed the unticked task" 'printf "%s" "$out" | grep -q "Colour the output"'
@@ -444,6 +526,42 @@ sed 's/^Accepted: .*/Accepted: "Perfect in every way."/' "$proj/docs/done.md" > 
 script "$proj" check-canon.sh
 expect "a done entry changed by hand is reported (review item 10)" 1 "entry match-one-month changed after ship-gate.sh wrote it"
 cp "$WORK/done.keep" "$proj/docs/done.md"
+echo "-- ship-gate --retire-proof: a proof leaves done only for a recorded reason (issue 7)"
+retire() { ship --retire-proof match-one-month "$1" --decision red-weekly --owner-said "Run it weekly instead."; }
+retire "sh tests/red_empty.sh"
+expect "retiring a proof needs a decision record" 1 "no decision record"
+printf 'Date: 2026-10-24\n\n## Decided\n\n- The empty-statement check runs weekly.\n\n## Rejected\n\n- Every handoff.\n\n## Reopens if\n\n- It regresses.\n' > "$proj/docs/decisions/2026-10-24-red-weekly.md"
+retire "sh tests/red_empty.sh"
+expect "the record must be committed" 1 "is not committed"
+rec_commit() { git -C "$proj" add -- docs/decisions/2026-10-24-red-weekly.md && git -C "$proj" commit -qm "$1" -- docs/decisions/2026-10-24-red-weekly.md; }
+rec_commit "Intake: red-weekly"
+ship --retire-proof match-one-month "sh tests/red_empty.sh" --decision red-weekly
+expect "retiring a proof needs the owner's words" 1 "usage"
+retire "sh tests/nope.sh"
+expect "only a command in the entry's Proof block can be retired" 1 "has no command"
+retire "sh tests/red_empty.sh"
+expect "a red test's command is retired only where the record names the test" 1 "does not name it"
+printf -- '- tests/red_empty.sh runs in the weekly job.\n' >> "$proj/docs/decisions/2026-10-24-red-weekly.md"
+rec_commit "Intake: red-weekly names its test"
+cp "$proj/src/tally/core.py" "$WORK/core.keep"
+sed 's/^refuse_empty = True$//' "$WORK/core.keep" > "$proj/src/tally/core.py"
+retire "sh tests/red_empty.sh"
+expect "a failing proof is never retired; it regresses" 1 "fails now"
+cp "$WORK/core.keep" "$proj/src/tally/core.py"
+retire "sh tests/red_empty.sh"
+expect "a proof is retired" 0 "is retired from match-one-month"
+check "the command left the Proof block, a Retired line cites the record and the owner, the old entry is filed, all committed" '! grep -q "^    sh tests/red_empty.sh" "$proj/docs/done.md" && grep -q "^    sh tests/check.sh" "$proj/docs/done.md" && grep -q "^Retired: \`sh tests/red_empty.sh\` from the proof. See \`red-weekly\`. The owner said: \"Run it weekly instead.\"" "$proj/docs/done.md" && grep -q "sh tests/red_empty.sh" "$proj"/docs/decisions/sources/retired-match-one-month-*.md && [ "$(git -C "$proj" log -1 --format=%s)" = "serial-build: retire proof match-one-month" ] && [ -z "$(git -C "$proj" status --porcelain -- docs/done.md docs/decisions/sources)" ]'
+script "$proj" check-canon.sh
+expect "the rewritten entry carries a valid checksum" 0 "PASS  every done entry is as ship-gate.sh wrote it"
+retire "sh tests/check.sh"
+expect "a gate's last proof cannot be retired" 1 "is the last proof"
+cp "$proj/docs/done.md" "$WORK/done.retired"
+sed 's/^Accepted: .*/Accepted: "edited"/' "$WORK/done.retired" > "$proj/docs/done.md"
+retire "sh tests/check.sh"
+expect "nothing is retired from an entry changed by hand" 1 "not as ship-gate.sh wrote it"
+git -C "$proj" reset -q HEAD~3
+cp "$WORK/done.keep" "$proj/docs/done.md"
+rm -f "$proj/docs/decisions/2026-10-24-red-weekly.md" "$proj"/docs/decisions/sources/retired-match-one-month-*.md
 hook "$proj" session-start.sh '{"session_id":"s3"}'
 expect "with no written-out gate left, session start names the next one-line gate" 0 "next one-line gate is two-accounts"
 commit "$proj" "Handoff: match-one-month shipped"
@@ -454,6 +572,199 @@ echo "-- a red slug reused by the next gate (review item 5)"
   printf -- '- red-empty-statement: the second account'"'"'s empty statement is dropped silently. Test: `tests/red_empty.sh@%s`. Reproduce: `sh tests/red_empty.sh`.\n\nAttempts that found nothing:\n- none\n' "$(git -C "$proj" hash-object tests/red_empty.sh)"; } > "$proj/docs/plan.md"
 commit "$proj" "Red: two-accounts, 1 findings"
 status; expect "the reused slug is judged on this plan's own record" 0 "1 of 1 red findings resolved"
+
+echo "-- red-file: one call from the agents' output to a drafted Red run (issue 2)"
+rf="$WORK/rf"
+cp -R "$proj" "$rf"
+today=$(date +%Y-%m-%d)
+git -C "$rf" rm -q docs/plan.md && git -C "$rf" commit -qm "Handoff: two-accounts shipped"
+printf '# rf-gate\n\nAcceptance: Ada can say it refuses an empty statement.\n\nProof:\n\n    sh tests/check.sh\n\nTried to break (the red lane attempts at least these):\n- an empty statement\n- a broken neighbour\n' > "$rf/docs/plan.md"
+commit "$rf" "Plan: rf-gate"
+script "$rf" red-guard.sh snapshot
+wt3="$rf/.claude/worktrees/agent-rf"
+git -C "$rf" worktree add -q -b worktree-agent-rf "$wt3" HEAD
+printf 'grep -q fixed_one src/tally/core.py\n' > "$wt3/tests/red_rf_a.sh"
+printf 'grep -q fixed_two src/tally/core.py\n' > "$wt3/tests/red_rf_c.sh"
+printf 'exit 0\n' > "$wt3/tests/red_rf_b.sh"
+cat > "$WORK/agent1.md" <<'EOF'
+## Findings
+- red-empty-statement: an empty statement crashes instead of being refused.
+  Test: tests/red_rf_a.sh. Reproduce: `sh tests/red_rf_a.sh`.
+  Seen: exit 1.
+- red-rf-neighbour: a broken neighbour drops the valid file.
+  Test: `tests/red_rf_c.sh`. Reproduce: `sh tests/red_rf_c.sh`.
+  Seen: exit 1.
+- red-rf-mirage: the header row is counted.
+  Test: tests/red_rf_b.sh. Reproduce: `sh tests/red_rf_b.sh`.
+  Seen: exit 1.
+
+## Attempts that found nothing
+- a file with only a header: refused, naming the missing rows.
+
+## Files written
+- tests/red_rf_a.sh
+EOF
+script "$rf" red-file.sh --output "$WORK/agent1.md" --worktree "$wt3" --cost "26 min, 1.4M tokens"
+expect "red-file verifies, imports, files the output, and drafts the run" 0 "Red run: $today, 4 attempts, 2 findings. Source: \`red-rf-gate-$today\`. Cost: 26 min, 1.4M tokens."
+check "each kept finding carries its test's blob hash" 'grep -q "^- red-empty-statement: an empty statement crashes instead of being refused. Test: \`tests/red_rf_a.sh@$(git -C "$rf" hash-object tests/red_rf_a.sh)\`. Reproduce: \`sh tests/red_rf_a.sh\`." "$rf/docs/plan.md"' "$(cat "$rf/docs/plan.md")"
+check "a finding whose command passes when re-run is recorded as a fruitless attempt" 'grep -q "^- the header row is counted: re-run by red-file.sh, \`sh tests/red_rf_b.sh\` passed, so it is not a finding" "$rf/docs/plan.md"'
+check "the raw output is filed verbatim, the worktree and its branch are gone, the lock is released" '[ -f "$rf/docs/decisions/sources/red-rf-gate-$today.md" ] && grep -q "red-rf-mirage" "$rf/docs/decisions/sources/red-rf-gate-$today.md" && [ ! -d "$wt3" ] && ! git -C "$rf" branch --list "worktree-agent-*" | grep -q . && [ ! -f "$(cd "$rf" && SB_ROOT=$(pwd) && SB_PLUGIN=$P && . "$S/lib.sh" && sb_red_lock)" ]'
+rm -f "$rf/tests/red_rf_b.sh"
+commit "$rf" "Red: rf-gate, 2 findings"
+script "$rf" red-status.sh
+expect "the drafted record is credible, and its findings open" 1 "2 of 2 red findings are open"
+script "$rf" red-status.sh
+expect "asking again on the same tree answers from memory" 1 "not re-run"
+script "$rf" red-status.sh --fresh
+case "$out" in *"not re-run"*) no "--fresh re-runs" "$out" ;; *) ok "--fresh re-runs" ;; esac
+
+echo "-- red-pack: a generated context pack per lane (issue 3)"
+mkdir -p "$rf/tests" && printf 'import pytest\n\n@pytest.fixture\ndef statement():\n    return []\n\ndef helper_x():\n    pass\n' > "$rf/tests/conftest.py"
+mkdir -p "$rf/src/web" && echo 'route = 1' > "$rf/src/web/routes.py" && echo 'parse = 1' >> "$rf/src/tally/core.py"
+commit "$rf" "build more"
+sed 's|"red": { "test_paths": \["tests/\*\*"\] }|"red": { "test_paths": ["tests/**"], "test_command": "sh {file}", "lanes": [ { "name": "core", "focus": "the parser and its inputs", "paths": ["src/tally/**"] }, { "name": "web", "focus": "the routes" } ] }|' "$rf/.claude/serial-build.json" > "$WORK/cfg" && cp "$WORK/cfg" "$rf/.claude/serial-build.json"
+script "$rf" check-config.sh
+expect "check-config lists each lane, the first taking the timing attacks" 0 "red lane core: the parser and its inputs; also every subprocess and timing attack"
+script "$rf" red-pack.sh core
+expect "the pack names the gate, the lane, and the single-file test command" 0 "# Context pack: rf-gate, lane core"
+check "the core lane gets its slice in full, and not the other lane's" 'printf "%s" "$out" | grep -q "^### src/tally/core.py" && ! printf "%s" "$out" | grep -q "^### src/web/routes.py" && printf "%s" "$out" | grep -q "^    sh {file}"' "$out"
+check "the pack lists every changed file and the fixtures to reuse, but prints no test file as source" 'printf "%s" "$out" | grep -q "^- src/web/routes.py" && printf "%s" "$out" | grep -q "tests/conftest.py:3:@pytest.fixture" && ! printf "%s" "$out" | grep -q "^### tests/"' "$out"
+script "$rf" red-pack.sh web
+check "a lane with no paths gets every changed source file" 'printf "%s" "$out" | grep -q "^### src/web/routes.py" && printf "%s" "$out" | grep -q "^### src/tally/core.py"' "$out"
+script "$rf" red-pack.sh nope
+expect "an unknown lane is refused" 1 "no lane named"
+git -C "$rf" checkout -q -- .claude/serial-build.json
+
+echo "-- lanes: two breakers' outputs filed as one run (issue 3)"
+script "$rf" red-guard.sh snapshot
+wa="$rf/.claude/worktrees/agent-a" wb="$rf/.claude/worktrees/agent-b"
+git -C "$rf" worktree add -q --detach "$wa" HEAD && git -C "$rf" worktree add -q --detach "$wb" HEAD
+printf 'grep -q lane_a_fixed src/tally/core.py\n' > "$wa/tests/red_core_a.sh"
+printf 'grep -q lane_b_fixed src/tally/core.py\n' > "$wb/tests/red_web_b.sh"
+printf '## Findings\n- red-lane-bug: the core lane breaks it.\n  Test: tests/red_core_a.sh. Reproduce: `sh tests/red_core_a.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/lane1.md"
+printf '## Findings\n- red-lane-bug: the web lane breaks it too.\n  Test: tests/red_web_b.sh. Reproduce: `sh tests/red_web_b.sh`.\n\n## Attempts that found nothing\n- b: nothing.\n' > "$WORK/lane2.md"
+script "$rf" red-file.sh --output "$WORK/lane1.md" --output "$WORK/lane2.md" --worktree "$wa" --worktree "$wb" --cost "15 min, 0.8M tokens"
+expect "two lanes become one run" 0 "4 attempts, 2 findings"
+check "a slug two lanes both used is made unique, and the source holds both lanes" 'grep -q "^- red-lane-bug: the core lane" "$rf/docs/plan.md" && grep -q "^- red-lane-bug-2: the web lane" "$rf/docs/plan.md" && grep -q "^## Lane 2" "$rf"/docs/decisions/sources/red-rf-gate-$today-2.md'
+git -C "$rf" reset -q --hard HEAD && git -C "$rf" clean -qfd -- tests docs
+script "$rf" red-guard.sh abort
+
+echo "-- red-file refuses rather than lose a finding (review of issues 2, 3)"
+rf_reset() { git -C "$rf" reset -q --hard HEAD && git -C "$rf" clean -qfd -- tests docs; for w in "$rf"/.claude/worktrees/*; do [ -e "$w/.git" ] && git -C "$rf" worktree remove --force "$w"; done; script "$rf" red-guard.sh abort; }
+script "$rf" red-guard.sh snapshot
+printf '## Findings\n- red-total_off: the total is off by one.\n  Test: tests/x.sh. Reproduce: `sh tests/x.sh`.\n1. red-c\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/odd.md"
+script "$rf" red-file.sh --output "$WORK/odd.md"
+expect "a finding line it cannot read stops everything, naming it" 1 "1. red-c"
+check "and nothing was done: the lock is still held, nothing filed" '! ls "$rf"/docs/decisions/sources/red-rf-gate-$today-2.md >/dev/null 2>&1 && git -C "$rf" diff --quiet -- docs/plan.md' 
+wl="$rf/.claude/worktrees/agent-left"
+git -C "$rf" worktree add -q --detach "$wl" HEAD && printf 'grep -q never src/tally/core.py\n' > "$wl/tests/red_left.sh"
+printf '## Findings\n* red-Total_Off: the total is off by one.\n  Test: `tests/red_left.sh`. Reproduce: `sh tests/red_left.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/left.md"
+script "$rf" red-file.sh --output "$WORK/left.md"
+expect "an agent worktree with changes that was not passed stops everything" 1 "were not passed with --worktree"
+script "$rf" red-file.sh --output "$WORK/left.md" --worktree "$wl"
+expect "a near-miss bullet is read, its slug normalised" 0 "- red-total-off: the total is off by one."
+script "$rf" red-status.sh --record
+expect "red-status --record passes a well-formed uncommitted draft" 0 "well formed; commit it"
+rf_reset
+script "$rf" red-guard.sh snapshot
+printf '## Findings\n- red-ghost: it breaks.\n  Test: tests/red_ghost.sh. Reproduce: `sh tests/red_ghost.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/ghost.md"
+script "$rf" red-file.sh --output "$WORK/ghost.md"
+expect "a finding whose test is not in the project is refused, not recorded as fruitless" 1 "tests are not in the project"
+check "nothing was recorded for it" '! grep -q "red-ghost" "$rf/docs/plan.md"'
+rf_reset
+script "$rf" red-guard.sh snapshot
+wm="$rf/.claude/worktrees/agent-m"
+git -C "$rf" worktree add -q --detach "$wm" HEAD && printf 'grep -q never src/tally/core.py\n' > "$wm/tests/red_m.sh"
+printf '## Findings\n- red-mutate: it breaks.\n  Test: tests/red_m.sh. Reproduce: `echo x >> src/tally/core.py; sh tests/red_m.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/mut.md"
+script "$rf" red-file.sh --output "$WORK/mut.md" --worktree "$wm"
+expect "a reproduce command that changes product code stops the filing" 1 "changed files that are not tests"
+check "and names the file" 'printf "%s" "$out" | grep -q "src/tally/core.py"'
+rf_reset
+
+echo "-- a voided run is recorded with the next filing, and the done entry states the cost (issue 2)"
+script "$rf" red-guard.sh snapshot
+echo planted >> "$rf/src/tally/core.py"
+printf '## Findings\nFindings: none\n\n## Attempts that found nothing\n- a retry after a failure: the second run matched the first.\n' > "$WORK/agent2.md"
+script "$rf" red-file.sh --output "$WORK/agent2.md" --cost "9 min, 0.5M tokens"
+expect "a run red-guard voids records nothing in the project" 1 "the run is void and nothing was recorded"
+check "no source was filed for the void" '[ ! -f "$rf/docs/decisions/sources/red-rf-gate-$today-2.md" ]'
+git -C "$rf" checkout -q -- src/tally/core.py
+script "$rf" red-guard.sh snapshot
+script "$rf" red-file.sh --output "$WORK/agent2.md" --cost "12 min, 0.6M tokens"
+expect "the next run is filed" 0 "Red run: $today, 1 attempts, 0 findings"
+check "with the void recorded above it" 'grep -q "^Voided red run: $today, 9 min, 0.5M tokens. Why: src/tally/core.py changed, and it is not a test." "$rf/docs/plan.md"' "$(cat "$rf/docs/plan.md")"
+commit "$rf" "Red: rf-gate, delta run"
+
+echo "-- re-pinning several findings in one commit (issue 2)"
+echo 'fixed_one = fixed_two = True' >> "$rf/src/tally/core.py"
+printf '# moved\ngrep -q fixed_one src/tally/core.py\n' > "$rf/tests/red_rf_a.sh"
+printf '# moved\ngrep -q fixed_two src/tally/core.py\n' > "$rf/tests/red_rf_c.sh"
+echo "# Source: the breaker confirms both re-pinned tests" > "$rf/docs/decisions/sources/red-rf-confirm.md"
+script "$rf" red-repin.sh red-empty-statement red-rf-neighbour --source red-rf-confirm
+expect "two findings re-pin in one call" 0 "red-rf-neighbour re-pinned to tests/red_rf_c.sh@"
+check "in one commit naming both" '[ "$(git -C "$rf" log -1 --format=%s)" = "serial-build: re-pin red-empty-statement red-rf-neighbour" ] && [ -z "$(git -C "$rf" status --porcelain -- tests docs/plan.md)" ]'
+script "$rf" red-status.sh
+expect "both resolve once the code is fixed" 0 "2 of 2 red findings resolved"
+script "$rf" ship-gate.sh rf-gate --accepted "It refuses the empty one."
+expect "the gate ships" 0 "moved to docs/done.md"
+check "the done entry counts the voided run and states each run's cost" 'grep -q "over 2 run(s) and 1 voided run(s)" "$rf/docs/done.md" && grep -q "red lane cost: run 1: 26 min, 1.4M tokens; run 2: 12 min, 0.6M tokens; voided: $today, 9 min, 0.5M tokens" "$rf/docs/done.md"' "$(grep "Tried to break" "$rf/docs/done.md")"
+
+echo "-- plan-draft: the next gate's plan drafted ahead, outside the project (issues 4, 6)"
+printf '\n### next-gate\n\nBuilds: a summary line.\n\nDemo: Ada runs it. Break it: a broken file beside a valid one.\n\nDepends on: none.\n\nDecided: none.\n\nDecide by proof: none.\n\nOpen: none.\n\nQA: the summary is right.\n\nTried to break: a broken neighbour.\n\nAcceptance: Ada can say the summary is right.\n' >> "$rf/docs/roadmap.md"
+commit "$rf" "Intake: next-gate written out"
+script "$rf" plan-draft.sh status next-gate
+expect "no draft yet" 1 "no draft of next-gate"
+script "$rf" plan-draft.sh start nope
+expect "only a written-out roadmap gate is drafted" 1 "no written-out gate"
+script "$rf" red-guard.sh snapshot
+script "$rf" plan-draft.sh start next-gate
+expect "start cuts a branch and a worktree, and prints the launch command" 0 "/serial-build:gate --draft next-gate"
+dwt=$(printf '%s\n' "$out" | sed -n 's/^plan-draft: the draft of next-gate will be written in \(.*\), on the branch.*/\1/p')
+check "the draft worktree is outside the project" '[ -d "$dwt" ] && case "$dwt" in "$rf"/*) false ;; *) true ;; esac' "$dwt"
+script "$rf" plan-draft.sh status next-gate
+expect "a started draft is in progress until saved" 2 "in progress"
+printf '# next-gate\n\nAcceptance: Ada can say the summary is right.\n\n- [ ] Add the summary to `src/tally/core.py`.\n\nProof:\n\n    sh tests/check.sh\n\nTried to break (the red lane attempts at least these):\n- a broken neighbour\n\nReview: two passes, no major finding on the second.\n' > "$dwt/docs/plan.md"
+(cd "$dwt" && "$SHELL_UNDER_TEST" "$S/plan-draft.sh" save next-gate) > "$WORK/out" 2>&1; code=$?; out=$(cat "$WORK/out")
+expect "the draft session saves its draft from its own worktree" 0 "is saved on serial-build/draft-next-gate"
+script "$rf" red-guard.sh verify
+expect "drafting during a red run does not void it" 0 "nothing but tests changed"
+script "$rf" plan-draft.sh delta next-gate
+expect "with nothing changed, the draft goes to the owner as reviewed" 0 "nothing the draft of next-gate depends on changed"
+echo 'summary = 1' >> "$rf/src/tally/core.py"; commit "$rf" "fix from the demo"
+script "$rf" plan-draft.sh delta next-gate
+expect "a change to a file the draft names needs one review pass on the change" 3 "src/tally/core.py"
+sed 's/^QA: the summary is right.$/QA: the summary is right, and totals match./' "$rf/docs/roadmap.md" > "$WORK/r" && cp "$WORK/r" "$rf/docs/roadmap.md"
+script "$rf" plan-draft.sh delta next-gate
+expect "so does a change to the gate's own roadmap section, such as a folded cleanup task (issue 5)" 3 "the next-gate section changed"
+script "$rf" plan-draft.sh take next-gate
+expect "take prints the draft" 0 "Add the summary to"
+check "the project's own plan and branch are untouched by the draft" '[ ! -f "$rf/docs/plan.md" ] && [ "$(git -C "$rf" symbolic-ref --short HEAD)" != serial-build/draft-next-gate ]'
+script "$rf" plan-draft.sh drop next-gate
+expect "drop removes the draft" 0 "dropped"
+check "the branch and worktree are gone" '! git -C "$rf" show-ref -q --verify refs/heads/serial-build/draft-next-gate && [ ! -d "$dwt" ]'
+echo "-- plan-draft from a linked worktree, after a purged temp folder, and at a Later list (review of issue 4)"
+lw="$WORK/rf-linked"
+git -C "$rf" worktree add -q -b side "$lw" HEAD
+printf '\n### side-gate\n\nBuilds: x.\n\nDemo: x. Break it: y.\n\nDepends on: none.\n\nDecided: none.\n\nDecide by proof: none.\n\nOpen: none.\n\nQA: x.\n\nTried to break: y.\n\nAcceptance: x.\n\nLater:\n- one-later: a later gate.\n' >> "$lw/docs/roadmap.md"
+(cd "$lw" && git add -A && git commit -qm "side gate")
+script "$lw" plan-draft.sh start side-gate
+expect "a project that is itself a linked worktree drafts from its own roadmap" 0 "/serial-build:gate --draft side-gate"
+sdw=$(printf '%s\n' "$out" | sed -n 's/^plan-draft: the draft of side-gate will be written in \(.*\), on the branch.*/\1/p')
+hook "$sdw" session-start.sh '{"session_id":"d1","source":"startup"}'
+expect "session start inside a draft worktree names the draft, not the active gate" 0 "drafted ahead"
+printf '# side-gate\n\nAcceptance: x.\n' > "$sdw/docs/plan.md"
+(cd "$sdw" && "$SHELL_UNDER_TEST" "$S/plan-draft.sh" save side-gate) > "$WORK/out" 2>&1; code=$?; out=$(cat "$WORK/out")
+expect "the draft session saves back to the linked worktree it came from" 0 "is saved"
+printf -- '- two-later: another.\n' >> "$lw/docs/roadmap.md"
+script "$lw" plan-draft.sh delta side-gate
+expect "a gate written out under the stage's Later list is not a change to the drafted gate" 0 "nothing the draft of side-gate depends on changed"
+rm -rf "$sdw"
+script "$lw" plan-draft.sh drop side-gate
+expect "drop works after the temp folder was purged" 0 "dropped"
+check "and the branch is really gone" '! git -C "$rf" show-ref -q --verify refs/heads/serial-build/draft-side-gate'
+git -C "$rf" worktree remove --force "$lw"
+
+git -C "$rf" checkout -q -- docs/roadmap.md
 
 echo "-- ship-gate --regress keeps the gate in the ledger (review item 6)"
 cp "$proj/docs/roadmap.md" "$WORK/roadmap.keep"; cp "$proj/docs/done.md" "$WORK/done.keep2"
@@ -505,10 +816,27 @@ sed 's/"version": 1,/"version": 1, "enabled": false,/' "$WORK/good.json" > "$pro
 hook "$proj" guard-generated.sh "$(write_input "$proj/src/tally/_version.py")"; silent "enabled: false switches the guard off"
 hook "$proj" session-start.sh '{"session_id":"s3"}'; silent "enabled: false silences session start"
 
+printf '{"version":1,"owner":{"name":"Ada"},"red":{"test_paths":["tests/**"],"test_command":"sh {file}"}}' > "$WORK/tc.json"
+script "$proj" check-config.sh "$WORK/tc.json"
+expect "check-config names the red lane's single-file test command (issue 3)" 0 'runs one test file with `sh {file}`'
+printf '{"version":1,"owner":{"name":"Ada"},"red":{"test_paths":["tests/**"],"test_command":"make test"}}' > "$WORK/tc.json"
+script "$proj" check-config.sh "$WORK/tc.json"
+expect "check-config warns when red.test_command has no {file} (issue 3)" 0 'has no {file}'
+
 echo "-- the skills and agents say what the scripts cannot enforce"
 check "/red demotes only on the owner's answer to AskUserQuestion, passed verbatim (third review, item 2)" 'grep -q "Ask the owner with AskUserQuestion" "$P/skills/red/SKILL.md" && grep -q "their answer, verbatim" "$P/skills/red/SKILL.md" && grep -q "never this session on its own judgement" "$P/skills/red/SKILL.md"'
 check "README says the demotion check stops accidents, not a determined forger (third review, item 2)" 'grep -q "not a determined forger" "$REPO/README.md"'
 check "the breaker is told to write tests with the Write tool, not shell redirects (third review, item 4)" 'grep -q "Write each test file with the Write tool, never a Bash heredoc or redirect" "$P/agents/red-breaker.md"'
+check "intake commits, then summarises, and waits only for glossary entries and contradictions (issue 9)" 'grep -q "Stop and wait before committing in exactly two cases" "$P/skills/intake/SKILL.md" && ! grep -q "Commit on approval" "$P/skills/intake/SKILL.md"'
+check "gate steps 2 to 4 never ask the owner (issue 9)" 'grep -q "Steps 2 to 4 never call AskUserQuestion" "$P/skills/gate/SKILL.md"'
+check "the gate template runs the demo before the red task (issue 8)" 'awk "/Run the demo end to end/ { d = NR } /Run \/serial-build:red on this gate/ { r = NR } END { exit !(d && r && d < r) }" "$P/skills/gate/SKILL.md"'
+check "the red skill runs from a fresh session and has a post-fix delta run (issues 2, 3)" 'grep -q "Run this skill in a fresh session" "$P/skills/red/SKILL.md" && grep -q "## After the fixes: the delta run" "$P/skills/red/SKILL.md"'
+check "the breaker carries the rules against re-pins (issue 3)" 'grep -q "One finding per test file" "$P/agents/red-breaker.md" && grep -q "at least 5x the measured latency" "$P/agents/red-breaker.md"'
+check "intake folds a cleanup-only finding into the next product gate, stating the cost (issue 5)" 'grep -q "^f. \*\*Cleanup only\*\*" "$P/skills/intake/SKILL.md" && grep -q "blocks that" "$P/skills/intake/SKILL.md"'
+check "handoff starts the next gate's draft without asking, and never a building session (issue 6)" 'grep -q "start drafting it" "$P/skills/handoff/SKILL.md" && grep -q "without asking" "$P/skills/handoff/SKILL.md" && grep -q "Never launch a background session that builds" "$P/skills/handoff/SKILL.md"'
+check "gate takes a waiting draft through the delta check (issue 4)" 'grep -q "plan-draft.sh delta" "$P/skills/gate/SKILL.md" && grep -q "\-\-draft <gate-slug>" "$P/skills/gate/SKILL.md"'
+missing_next=$(for k in gate intake red demo-brief handoff; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
+check "every step names the next command (issue 6)" '[ -z "$missing_next" ] && grep -q "next: \`/clear\`" "$P/skills/gate/SKILL.md"' "$missing_next"
 
 echo "-- the README"
 fields=$(grep -o '^| `[a-z_.]*`' "$P/skills/scope/references/config.md" | tr -d '|` ')

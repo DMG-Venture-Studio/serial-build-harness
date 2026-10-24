@@ -20,11 +20,23 @@ is never hand-edited (a hook refuses it); run
 `sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --regress <gate-slug> --failed "<the failing output>"`.
 Nothing stays in done on faith.
 
+A proof that no longer earns its re-run at every handoff (one another proof line already runs,
+such as a single test file the suite runs; or one the project moved to a weekly schedule) is
+retired, never skipped:
+`sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --retire-proof <gate-slug> "<command, exactly as listed>" --decision <slug> --owner-said "<their words, verbatim>"`.
+It is the owner's call, so ask them first. It needs a committed, dated decision record saying why
+(file it through `/serial-build:intake` first) that names every test file the command runs, so a
+red finding's test is retired only where the record says what still runs it. It refuses a gate's
+last proof and a proof that fails now: a failing proof is a regression, never a retirement. It
+commits the change itself.
+
 ## 2. The red lane's verdict
 
 If `docs/plan.md` exists, run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh"` and quote its
 output. It checks that the red record is credible (every attempt listed, the raw output filed)
 and runs each finding's reproduce command against the test exactly as the red lane wrote it.
+It remembers its verdict for the exact tree, so asking again on an unchanged tree answers at once;
+pass `--fresh` only after a change git cannot see, such as a reinstalled dependency folder.
 Exit 1 means the gate does not ship this session: either there is no credible red run (run
 `/serial-build:red`), or a finding is open (the builder fixes the code; deleting, weakening, or
 editing a red test or its line reopens the finding rather than resolving it; a finding the owner
@@ -62,19 +74,27 @@ Commit per the project's commit policy, as "Handoff: <what moved or what waits, 
 
 The next action is implicit: `docs/plan.md` if it exists, else `/serial-build:gate` on the first
 written-out roadmap gate (or `/serial-build:intake` to write out the next one-line gate). Say
-which, in one line. Other plugins also ship a skill named handoff; always name this one in full,
-`/serial-build:handoff`, when telling the owner what to run.
+which in one line, as the command to run after `/clear` or in a new session, for example "next:
+`/clear`, then `/serial-build:gate`". The ledger holds everything a cold start needs, so the next
+session never inherits this one's context. Other plugins also ship a skill named handoff; always
+name this one in full, `/serial-build:handoff`, when telling the owner what to run.
 
-When the next session starts immediately, offer to launch it in the background, seeded with the
-active plan, and ask before launching; a background agent that starts work the owner meant to
-supervise is worse than none:
+When a gate shipped and the next written-out roadmap gate has no draft
+(`sh "${CLAUDE_PLUGIN_ROOT}/scripts/plan-draft.sh" status <next-gate>` exits 1), start drafting it
+now, without asking:
 
 ```
-claude --bg --name "<descriptive name>" "$(cat docs/plan.md)"
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/plan-draft.sh" start <next-gate>
 ```
 
-Without a plan, seed it with the first gate's heading and acceptance and the instruction to run
-`/serial-build:gate`. Always pass a descriptive `--name`; it is what the job list shows.
+and run the launch command it prints, which starts `/serial-build:gate --draft <next-gate>` in the
+background from a worktree outside the project. Always keep its descriptive `--name`; it is what
+the job list shows. Asking first buys nothing: the draft session writes only to its own branch,
+and the owner approves the plan when `/serial-build:gate` takes the draft, exactly as for a plan
+made from scratch. If a draft is already saved, the next command is `/serial-build:gate`, which
+takes it.
+
+Never launch a background session that builds; the owner supervises building.
 
 ## What stays out
 

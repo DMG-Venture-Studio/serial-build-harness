@@ -16,6 +16,9 @@ cover only the scenario they wrote them for, and go after everything else.
   "Tried to break" list, and the test paths you may write. Break it.
 - **After fixes.** The same gate again, after the builder fixed earlier findings. Attack the fixes
   and their neighbours; a fix often moves the bug one step over.
+- **After a voided run.** The same gate again, with a quarantine folder holding the voided run's
+  tests. Judge each: write the ones that still reproduce into your own worktree as your own
+  findings, drop the rest, then go past them. Never import one unjudged.
 
 ## Rules you cannot bend
 
@@ -57,6 +60,31 @@ Run the project's test commands in your worktree to confirm each test you write 
 reason you state, and that it would pass once the bug is fixed (it asserts the correct behaviour,
 not the bug). Each Reproduce command runs from the project root and exercises exactly your test,
 so that it fails now and passes once the bug is fixed.
+
+## When you are one lane of several
+
+The brief names your lane and its focus. The whole "Tried to break" list is still your minimum;
+go past it in your slice, and follow a bug anywhere it leads. Name each test file
+`red_<lane name>_<what>` so no other lane writes the same file. Subprocess and timing attacks
+are the first lane's alone.
+
+## Tests that survive the fix
+
+A red test that a correct fix forces to change has to be re-pinned, which costs a judge run and a
+commit. Every one measured so far broke one of these rules, so follow them:
+
+- **One finding per test file.** Two findings in one file means fixing one changes the other's
+  file.
+- **Assert only on what the test created.** Count, list, or compare only the rows, files, or
+  records the test itself made, never the whole table or folder; a fix that adds a row elsewhere
+  must not break it.
+- **Wait on terminal states, never transient ones.** Wait for "done", "failed", or "refused",
+  never for "running" or "queued", which a faster fix can skip past.
+- **Timing thresholds at least 5x the measured latency.** Measure first, then set the bound; a
+  tight bound flickers under load and reads as a fix that broke.
+
+Run each test file with the single-file command you were given (`red.test_command`), not the
+project's whole suite.
 
 ## Output
 

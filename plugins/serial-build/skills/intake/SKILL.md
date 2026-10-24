@@ -25,7 +25,7 @@ tree. Never `docs/plan.md` for editing: see step 5.
 
 ## 3. Classify it as exactly one
 
-a. **New work, consistent with the docs**: draft a roadmap gate with every section (Builds, Demo
+a. **New work, consistent with the docs** (not a cleanup-only repair; see f): draft a roadmap gate with every section (Builds, Demo
    ending in a `Break it:` step where the owner tries to break it, Depends on, Decided, Decide by
    proof, Open, QA, Tried to break, Acceptance) and propose where it slots relative to the
    existing gates.
@@ -44,13 +44,29 @@ e. **Writing out a later gate** (the next one-line gate in a roadmap stage's Lat
    to be planned): replace its line with the gate written out with every section, as in a, keeping
    its slug and its place in the order.
 
+f. **Cleanup only**: the finding (1) only repairs or hardens behaviour a shipped gate already
+   has, and (2) gives the owner nothing new to see. It does not become a gate of its own, which
+   would pay the whole fixed cost of a gate (plan, reviews, red lane, demo, handoff) for a small
+   build. Fold it into the next written-out product gate after the active one, the next one that
+   gives the owner something new to see: add the repair to its Builds as one sentence, a QA line
+   that proves it, and a Tried to break bullet that attacks it. Its proof then joins that gate's
+   Proof block, the red lane attacks it with that gate, and the owner demos it there. If no
+   product gate is written out, write the next one out (as in e) with the repair folded in.
+
+   The cost, stated in the summary every time: a repair that keeps failing now blocks that
+   product gate's ship, and a later regression of its proof sends the whole product gate back to
+   the roadmap. So it stays a gate of its own, and the summary says why, when it guards one of the
+   project's floors (the hard rules in CLAUDE.md), or when the next product gate is a stage or
+   more away. A draft of that gate already made ahead (`/serial-build:gate --draft`) is not
+   edited; the gate skill's delta check sees the changed roadmap section and reviews the change.
+
 Write every sentence for someone who has never opened the repository: say what each thing is and
 what changes for it, expand every handle into the concrete thing, cite records as See `slug`. No
 dates, statuses, or rejected alternatives outside `docs/decisions/`.
 
-## 4. Check, review, summarise; then stop
+## 4. Check, review, commit, summarise
 
-Never show a diff. Write the files, then, before any commit:
+Never show a diff. Write the files, then:
 
 1. Run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/check-canon.sh"` and report each line PASS or FAIL. Also
    check by reading: no term the change retired remains anywhere; no file now holds a second
@@ -60,14 +76,29 @@ Never show a diff. Write the files, then, before any commit:
    source-review mode: give it the source's path and the list of files written, and ask what the
    source says that the files miss, contradict, or weaken. Fold in what it finds and rerun the
    checks.
-3. Give the owner a plain summary of at most ten lines: what changed, what was superseded, and
-   what you decided that the source did not cover, each decision with its consequence.
+3. Commit, per the project's commit policy, as "Intake: <what changed, in plain words>". Intake
+   writes only to the docs, so the commit is one `git revert` from undone; waiting for approval
+   first buys nothing the summary does not.
+4. Give the owner a plain summary of at most ten lines: what changed, what was superseded, and
+   what you decided that the source did not cover, each decision with its consequence. End it
+   with the commit's short hash and the next command (see step 6).
 
-Stop the turn on the summary and wait. Commit on approval, per the project's commit policy, as
-"Intake: <what changed, in plain words>".
+Stop and wait before committing in exactly two cases, and say which in the summary's first line:
+
+- the check's NOTE line lists a new glossary entry: the owner approves each by name, so commit
+  only after they do;
+- the finding contradicts something the owner stated in the docs (class c): the owner decides,
+  so ask with the summary and commit on their answer.
 
 ## 5. The active plan is not intake's
 
 Never edit `docs/plan.md`. A mid-flight finding queues behind the active gate as a roadmap gate or
 an open question. If it blocks the active gate, say so, and let the owner decide whether to
 re-plan with `/serial-build:gate`.
+
+## 6. Next
+
+Name the next command in the summary's last line, to run after `/clear` or in a new session (the
+ledger holds everything a cold start needs): `/serial-build:gate` when this wrote out the next
+gate and no plan is active, else whatever the active plan's next step is (for example
+"next: `/clear`, then continue `docs/plan.md`").
