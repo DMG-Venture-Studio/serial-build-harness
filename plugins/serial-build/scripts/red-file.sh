@@ -1,27 +1,36 @@
 #!/bin/sh
 # The red lane's mechanical steps after the red-breaker agents return, in one call,
 # so the session running /serial-build:red spends its turns on judgement, not on
-# bookkeeping. In order, stopping at the first that fails:
+# bookkeeping. It stops at the first step that fails:
 #
-#   1. red-guard.sh verify: nothing but tests changed in the project. This
+#   1. Reads every response. A line in a Findings section that names a red
+#      finding but is not in the agent's output form stops everything, with
+#      nothing done: a finding it could not read must not vanish.
+#   2. Refuses, with nothing done, while an agent worktree holds changes but was
+#      not passed with --worktree, since its tests would be lost.
+#   3. red-guard.sh verify: nothing but tests changed in the project. This
 #      releases the red lock.
-#   2. red-import.sh WORKTREE... --remove: only tests come home, and two lanes
+#   4. red-import.sh WORKTREE... --remove: only tests come home, and two lanes
 #      did not write the same test file.
-#   3. Files the agents' responses verbatim as one decision source,
+#   5. Refuses, recording nothing, when a finding's test is not in the project.
+#   6. Re-runs each finding's Reproduce command from the project root, renaming a
+#      finding whose slug is taken. One whose command passes now is recorded as an
+#      attempt that found nothing, saying why. A command that changes any file
+#      outside the test paths stops it, recording nothing.
+#   7. Files the responses verbatim as one decision source,
 #      docs/decisions/sources/red-<gate>-<date>[-n].md, one section per lane.
-#   4. Reads each response's findings and fruitless attempts, renames a finding
-#      whose slug is already taken, and re-runs each finding's Reproduce command
-#      from the project root. A finding whose command passes now, or whose test did
-#      not come back, is recorded as an attempt that found nothing, saying why.
-#   5. Appends the Red run to docs/plan.md's "## Red" section: the run line (with
+#   8. Appends the Red run to docs/plan.md's "## Red" section: the run line (with
 #      --cost, if given), each finding with its test's git blob hash, and the
 #      fruitless attempts. Runs voided since the last filing are recorded above
 #      it as "Voided red run:" lines, so the done entry states the true cost.
 #
-# A void (step 1 or 2) records nothing in the project, remembers the void for the
-# next filing, and prints the command that salvages the agents' tests.
-# Nothing is committed: read the drafted section against the raw output (a
-# finding counts only if it fails for the reason the agent gave), then commit.
+# A void (3 or 4) records nothing in the project, remembers the void for the
+# next filing, and prints the command that salvages the agents' tests. After a
+# refusal in 5 or 6, run it again once fixed: verify passes again while only
+# tests changed.
+# Nothing is committed: judge the drafted section against the raw output (a
+# finding counts only if it fails for the reason the agent gave), check it with
+# red-status.sh --record, then commit.
 #
 # Usage: red-file.sh --output FILE [--output FILE]... [--worktree DIR]... [--cost "<text>"]
 #   --output    a file holding one red-breaker agent's response, verbatim; one per lane
@@ -68,6 +77,56 @@ void() { # void REASON
   exit 1
 }
 
+# Read the responses first, so a response the script cannot read whole stops
+# everything before anything is checked, moved, or recorded. Rows:
+# F<TAB>slug<TAB>what<TAB>test<TAB>command, A<TAB>attempt, U<TAB>an unread line.
+all=$(mktemp "${TMPDIR:-/tmp}/sb-file-all.XXXXXX") || exit 1
+while IFS= read -r o; do [ -n "$o" ] && cat "$o" && printf '\n## End\n'; done > "$all" <<EOF
+$outputs
+EOF
+rows=$(LC_ALL=C awk '
+  function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+  function flush(   slug, what, test, cmd) {
+    if (cur == "") return
+    if (kind == "F") {
+      slug = cur; sub(/^([-*]|[0-9]+[.)]) +/, "", slug); sub(/:.*/, "", slug); slug = tolower(slug); gsub(/[_.]/, "-", slug)
+      what = cur; sub(/^([-*]|[0-9]+[.)]) +[Rr][Ee][Dd]-[A-Za-z0-9_.-]*:[ ]*/, "", what); sub(/[ ]*Test:.*/, "", what); sub(/[ .]*$/, "", what)
+      test = "-"; if (match(cur, /Test: `?[^ `]+/)) { test = substr(cur, RSTART + 6, RLENGTH - 6); gsub(/`/, "", test); sub(/[.,;]$/, "", test) }
+      cmd = "-"; if (match(cur, /Reproduce: `[^`]*`/)) cmd = substr(cur, RSTART + 12, RLENGTH - 13)
+      printf "F\t%s\t%s\t%s\t%s\n", slug, what, test, cmd
+    } else { a = cur; sub(/^([-*]|[0-9]+[.)]) +/, "", a); printf "A\t%s\n", a }
+    cur = ""
+  }
+  /^#+ / { flush(); sec = tolower($0); next }
+  cur != "" && /^[ \t]+[^ \t]/ { cur = cur " " trim($0); next }
+  { flush() }
+  sec ~ /finding/ && /^([-*]|[0-9]+[.)]) +[Rr][Ee][Dd]-[A-Za-z0-9_.-]+:/ { kind = "F"; cur = trim($0); next }
+  sec ~ /finding/ && /[Rr][Ee][Dd]-[A-Za-z0-9]/ { printf "U\t%s\n", trim($0); next }
+  sec ~ /attempt/ && /^([-*]|[0-9]+[.)]) / && !/^- none\.?$/ { kind = "A"; cur = trim($0); next }
+  END { flush() }' "$all")
+rm -f "$all"
+unread=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "U" { print "  " $2 }')
+if [ -n "$unread" ]; then
+  printf 'red-file: these lines in a Findings section name a red finding but are not in the form "- red-<slug>: <what>. Test: <path>. Reproduce: `<command>`.", so nothing was done (the red lock is still held):\n%s\nAsk the agent to restate its findings in the form agents/red-breaker.md gives, save that response, and run red-file.sh again with it.\n' "$unread" >&2
+  exit 1
+fi
+
+# A worktree an agent changed that is not passed in would be dropped unseen.
+named=$(printf '%s' "$wts" | while IFS= read -r w; do [ -n "$w" ] && (cd "$w" && pwd -P); done)
+prefix=$(git rev-parse --show-prefix)
+left=$(for d in .claude/worktrees/*; do
+  [ -e "$d/.git" ] || continue
+  d=$(cd "$d" && pwd -P)
+  printf '%s\n' "$named" | grep -qxF -- "$d" && continue
+  home=$SB_ROOT; SB_ROOT="$d/${prefix%/}"; SB_ROOT=${SB_ROOT%/}
+  [ -n "$(sb_changed_files)" ] && printf '  %s\n' "$d"
+  SB_ROOT=$home
+done)
+if [ -n "$left" ]; then
+  printf 'red-file: these agent worktrees hold changes but were not passed with --worktree, so their tests would be lost; nothing was done (the red lock is still held):\n%s\nPass each with --worktree (every lane'"'"'s), or remove one that is not this run'"'"'s.\n' "$left" >&2
+  exit 1
+fi
+
 # 1 and 2: the run is clean.
 v=$(sh "$SB_SCRIPTS/red-guard.sh" verify 2>&1) || void "$v"
 if [ -n "$wts" ]; then
@@ -77,6 +136,52 @@ $wts
 EOF
   im=$(sh "$SB_SCRIPTS/red-import.sh" "$@" --remove 2>&1) || void "$im"
   printf '%s\n' "$im"
+fi
+
+# Every finding with a command must have its test here now; a missing one is a
+# mistake in filing, never a fruitless attempt.
+missing=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "F" && $5 != "-" { print $4 }' | while IFS= read -r t; do
+  t=${t%%::*}; [ "$t" != - ] && [ -f "$t" ] || printf '  %s\n' "$t"
+done)
+if [ -n "$missing" ]; then
+  printf 'red-file: these findings'"'"' tests are not in the project, so nothing was recorded:\n%s\nIf a worktree was not passed, bring its tests home with red-import.sh; if the agent named a wrong path, ask it to restate. Then run red-file.sh again (verify passes again while only tests changed).\n' "$missing" >&2
+  exit 1
+fi
+
+# 4: re-run each finding, watching that no command changes anything but tests.
+taken=$(LC_ALL=C awk -f "$SB_SCRIPTS/red-record.awk" "$plan" | awk -F '\t' '$1 == "FIND" { print $3 }')
+out=$(mktemp "${TMPDIR:-/tmp}/sb-file.XXXXXX") || exit 1
+trap 'rm -f "$out" "$out.find" "$out.att" "$plan.sb-add" "$plan.sb-tmp"' EXIT
+: > "$out.find"; : > "$out.att"
+nontest() { # each changed file outside the test paths, with its checksum
+  _all=$(sb_changed_files)
+  _t=$(printf '%s\n' "$_all" | sb_filter "$SB_CFG" red.test_paths)
+  printf '%s\n' "$_all" | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    printf '%s\n' "$_t" | grep -qxF -- "$f" && continue
+    printf '%s %s\n' "$f" "$(sb_sum "$f")"
+  done
+}
+before=$(nontest)
+printf '%s\n' "$rows" | awk -F '\t' '$1 == "A" { print "- " $2 }' >> "$out.att"
+printf '%s\n' "$rows" | awk -F '\t' '$1 == "F"' | while IFS="$TAB" read -r _ slug what test cmd; do
+  base=$slug k=1
+  while printf '%s\n' "$taken" | grep -qx "$slug"; do k=$((k + 1)); slug="$base-$k"; done
+  taken="$taken
+$slug"
+  path=${test%%::*}
+  if [ "$cmd" = - ]; then
+    printf -- '- %s: reported with no Reproduce command, so it is not a finding (%s)\n' "$what" "$base" >> "$out.att"
+  elif (sh -c "$cmd") > "$out" 2>&1; then
+    printf -- '- %s: re-run by red-file.sh, `%s` passed, so it is not a finding (%s)\n' "$what" "$cmd" "$base" >> "$out.att"
+  else
+    printf -- '- %s: %s. Test: `%s@%s`. Reproduce: `%s`.\n' "$slug" "$what" "$path" "$(git hash-object "$path")" "$cmd" >> "$out.find"
+  fi
+done
+after=$(nontest)
+if [ "$before" != "$after" ]; then
+  printf 'red-file: a reproduce command changed files that are not tests, so nothing was recorded. Restore them, and ask the agent for commands that only run its tests:\n%s\n' "$(printf '%s\n%s\n' "$before" "$after" | LC_ALL=C sort | uniq -u | cut -d ' ' -f 1 | LC_ALL=C sort -u | sed 's/^/  /')" >&2
+  exit 1
 fi
 
 # 3: the raw output, verbatim.
@@ -98,53 +203,6 @@ lanes=$(printf '%s' "$outputs" | grep -c .)
 $outputs
 EOF
 } > "docs/decisions/sources/$src.md"
-
-# 4: findings and attempts, as rows: F<TAB>slug<TAB>what<TAB>test<TAB>command, or A<TAB>attempt.
-all=$(mktemp "${TMPDIR:-/tmp}/sb-file-all.XXXXXX") || exit 1
-while IFS= read -r o; do [ -n "$o" ] && cat "$o" && printf '\n## End\n'; done > "$all" <<EOF
-$outputs
-EOF
-rows=$(LC_ALL=C awk '
-  function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-  function flush(   slug, what, test, cmd) {
-    if (cur == "") return
-    if (kind == "F") {
-      slug = cur; sub(/^- /, "", slug); sub(/:.*/, "", slug)
-      what = cur; sub(/^- red-[a-z0-9-]*:[ ]*/, "", what); sub(/[ ]*Test:.*/, "", what); sub(/[ .]*$/, "", what)
-      test = "-"; if (match(cur, /Test: `?[^ `]+/)) { test = substr(cur, RSTART + 6, RLENGTH - 6); gsub(/`/, "", test); sub(/[.,;]$/, "", test) }
-      cmd = "-"; if (match(cur, /Reproduce: `[^`]*`/)) cmd = substr(cur, RSTART + 12, RLENGTH - 13)
-      printf "F\t%s\t%s\t%s\t%s\n", slug, what, test, cmd
-    } else printf "A\t%s\n", substr(cur, 3)
-    cur = ""
-  }
-  /^#+ / { flush(); sec = tolower($0); next }
-  cur != "" && /^[ \t]+[^ \t]/ { cur = cur " " trim($0); next }
-  { flush() }
-  sec ~ /finding/ && /^- red-[a-z0-9-]+:/ { kind = "F"; cur = trim($0); next }
-  sec ~ /attempt/ && /^- / && !/^- none\.?$/ { kind = "A"; cur = trim($0); next }
-  END { flush() }' "$all")
-rm -f "$all"
-taken=$(LC_ALL=C awk -f "$SB_SCRIPTS/red-record.awk" "$plan" | awk -F '\t' '$1 == "FIND" { print $3 }')
-out=$(mktemp "${TMPDIR:-/tmp}/sb-file.XXXXXX") || exit 1
-trap 'rm -f "$out" "$out.find" "$out.att" "$plan.sb-add" "$plan.sb-tmp"' EXIT
-: > "$out.find"; : > "$out.att"
-printf '%s\n' "$rows" | awk -F '\t' '$1 == "A" { print "- " $2 }' >> "$out.att"
-printf '%s\n' "$rows" | awk -F '\t' '$1 == "F"' | while IFS="$TAB" read -r _ slug what test cmd; do
-  base=$slug k=1
-  while printf '%s\n' "$taken" | grep -qx "$slug"; do k=$((k + 1)); slug="$base-$k"; done
-  taken="$taken
-$slug"
-  path=${test%%::*}
-  if [ "$cmd" = - ]; then
-    printf -- '- %s: reported with no Reproduce command, so it is not a finding (%s)\n' "$what" "$base" >> "$out.att"
-  elif [ "$path" = - ] || [ ! -f "$path" ]; then
-    printf -- '- %s: its test %s did not come back from the worktree, so it is not a finding (%s)\n' "$what" "$path" "$base" >> "$out.att"
-  elif (sh -c "$cmd") > "$out" 2>&1; then
-    printf -- '- %s: re-run by red-file.sh, `%s` passed, so it is not a finding (%s)\n' "$what" "$cmd" "$base" >> "$out.att"
-  else
-    printf -- '- %s: %s. Test: `%s@%s`. Reproduce: `%s`.\n' "$slug" "$what" "$path" "$(git hash-object "$path")" "$cmd" >> "$out.find"
-  fi
-done
 
 # 5: the Red run, appended to the plan's Red section.
 nf=$(grep -c . "$out.find")

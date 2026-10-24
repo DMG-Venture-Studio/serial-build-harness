@@ -34,12 +34,20 @@ case "$gate" in *[!a-z0-9-]*) refuse "a gate slug is lowercase letters, digits, 
 SB_ROOT=$(sb_project_root)
 git -C "$SB_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || refuse "$SB_ROOT is not in a git work tree"
 cd "$SB_ROOT" || exit 1
-# Run from the draft worktree itself, act for the project it was cut from.
-common=$(cd "$(git rev-parse --git-common-dir)" && pwd -P)
+# Run from a draft worktree itself, act for the checkout it was cut from: the
+# worktree that has the branch the draft branched from checked out, else the main
+# one. Run from any other checkout (the project may itself be a linked
+# worktree), act for that checkout.
+# Where each draft came from is kept in .git/serial-build/ (shared by every
+# worktree, and not a file the red guard watches; .git/config is).
 prefix=$(git rev-parse --show-prefix)
-main=$(git worktree list --porcelain | awk '/^worktree /{ print substr($0, 10); exit }')
-SB_ROOT="$main/${prefix%/}"; SB_ROOT=${SB_ROOT%/}
-cd "$SB_ROOT" || exit 1
+meta="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)/serial-build"
+case "$(git symbolic-ref -q --short HEAD 2>/dev/null)" in
+  serial-build/draft-*)
+    _b=$(git symbolic-ref -q --short HEAD)
+    SB_ROOT=$(cat "$meta/draft-${_b#serial-build/draft-}.from" 2>/dev/null) || refuse "this draft worktree does not record which checkout it was cut from"
+    cd "$SB_ROOT" || exit 1 ;;
+esac
 branch="serial-build/draft-$gate"
 wt="$(sb_state_dir)/draft-$gate"
 draftpath="${prefix}docs/plan.md"
@@ -51,7 +59,9 @@ case "$mode" in
     [ -f docs/roadmap.md ] && grep -qx "### $gate" docs/roadmap.md || refuse "docs/roadmap.md has no written-out gate \"### $gate\"; write it out through /serial-build:intake first"
     [ -f docs/plan.md ] && [ "$(awk '/^# /{print substr($0, 3); exit}' docs/plan.md)" = "$gate" ] && refuse "$gate is the active plan already"
     has_branch && refuse "a draft of $gate already exists (plan-draft.sh status $gate); drop it first to start over"
+    git worktree prune 2>/dev/null
     git worktree add -q -b "$branch" "$wt" HEAD || refuse "could not make the draft worktree"
+    mkdir -p "$meta" && pwd -P > "$meta/draft-$gate.from"
     there="$wt/${prefix%/}"; there=${there%/}
     printf 'plan-draft: the draft of %s will be written in %s, on the branch %s, cut at %s.\nLaunch the draft session there:\n  cd "%s" && claude --bg --name "draft plan: %s" "/serial-build:gate --draft %s"\n' "$gate" "$there" "$branch" "$(git rev-parse --short HEAD)" "$there" "$gate" "$gate"
     ;;
@@ -75,7 +85,7 @@ Draft-base: $base" -- "$draftpath" || refuse "could not commit the draft"
     ;;
   delta)
     base=$(base_of); [ -n "$base" ] || refuse "no saved draft of $gate"
-    section() { awk -v h="### $gate" '$0 == h { on = 1; print; next } on && /^(#|##|###) / { exit } on'; }
+    section() { awk -v h="### $gate" '$0 == h { on = 1; print; next } on && (/^(#|##|###) / || /^Later:/) { exit } on'; }
     problems=
     if [ "$(git show "$base:./docs/roadmap.md" 2>/dev/null | section)" != "$(section < docs/roadmap.md)" ]; then
       problems="docs/roadmap.md: the $gate section changed
@@ -104,7 +114,11 @@ Draft-base: $base" -- "$draftpath" || refuse "could not commit the draft"
     ;;
   drop)
     [ -d "$wt" ] && git worktree remove --force "$wt"
-    has_branch && git branch -D -q "$branch"
+    git worktree prune 2>/dev/null
+    if has_branch; then
+      git branch -D -q "$branch" || refuse "could not delete the branch $branch; the draft is not dropped"
+      rm -f "$meta/draft-$gate.from"
+    fi
     echo "plan-draft: the draft of $gate is dropped."
     ;;
 esac

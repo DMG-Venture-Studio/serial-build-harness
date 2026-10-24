@@ -306,6 +306,7 @@ import_case "a commit in the worktree voids the run" 1 "committed or started els
 
 # ---------------------------------------------------------------- red lock and preflight (issue 1)
 echo "-- the red lock and the snapshot preflight: other writers are stopped, not just caught"
+script "$proj" red-guard.sh abort
 export SB_RED_QUIET_MINUTES=2
 echo "log line" > "$proj/.env"
 script "$proj" red-guard.sh snapshot
@@ -323,19 +324,24 @@ expect "nor into an agent worktree" 2 "red lock is held"
 hook "$proj" red-lock.sh "$(write_input "$WORK/elsewhere/notes.md")"; silent "a write outside the project passes"
 hook "$proj" red-lock.sh "$(red_input Write "\"file_path\":\"$proj/.claude/worktrees/agent-x/tests/t.py\"")"; silent "the red-breaker agent is not locked out"
 hook "$proj" red-lock.sh "$(red_bash "uv run pytest tests/t.py")"; silent "the red-breaker agent may run its tests"
-for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'cat a | tee b' 'find . -name x -delete' 'git checkout -- .' 'sh tests/check.sh' 'make dev' 'git stash' 'ls $(rm -rf src)' 'sh /p/scripts/red-guard.sh verify; rm -rf src'; do
+for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'cat a | tee b' 'find . -name x -delete' 'git checkout -- .' 'sh tests/check.sh' 'make dev' 'git stash' 'ls $(rm -rf src)' 'sh /p/scripts/red-guard.sh verify; rm -rf src' 'rm -rf src /x/scripts/red-guard.sh' 'touch evil /x/scripts/red-file.sh' 'sort -o f a' 'uniq a out' 'date -s 12:00' 'git diff --output=x' 'git log --output=x' 'git -c core.fsmonitor=evil status'; do
   hook "$proj" red-lock.sh "$(main_bash "$c")"
   expect "the lock refuses for the builder: $c" 2 "is refused while it is held"
 done
-for c in 'sh /x/scripts/red-file.sh --output /tmp/o.md --cost \"26 min, 1.4M tokens\"' 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'FOO=1 date'; do
+for c in 'sh /x/scripts/red-file.sh --output /tmp/o.md --cost \"26 min, 1.4M tokens\"' 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'sh \"/x y/scripts/red-pack.sh\" core' 'FOO=1 pwd'; do
   hook "$proj" red-lock.sh "$(main_bash "$c")"; silent "the lock allows for the builder: $c"
 done
 hook "$proj" session-start.sh '{"session_id":"s4","source":"startup"}'
 expect "session start reports a held lock and how to release it" 0 "the red lock is held"
+check "the lock lives in the shared .git, not the temp folder the hook and the shell may not share (review)" 'ls "$proj"/.git/serial-build/red-lock-* >/dev/null 2>&1'
+(cd "$proj" && TMPDIR="$WORK/othertmp" && mkdir -p "$TMPDIR" && export TMPDIR && printf '%s' "$(write_input "$proj/src/tally/core.py")" | CLAUDE_PROJECT_DIR="$proj" "$SHELL_UNDER_TEST" "$H/red-lock.sh") > /dev/null 2>&1; code=$?
+check "a hook with another TMPDIR still sees the lock" '[ "$code" = 2 ]' "exit $code"
 script "$proj" red-guard.sh verify
 expect "verify passes" 0 "nothing but tests changed"
 hook "$proj" red-lock.sh "$(write_input "$proj/src/tally/core.py")"; silent "verify releases the lock"
 script "$proj" red-guard.sh snapshot
+script "$proj" red-guard.sh snapshot
+expect "a second snapshot is refused while a run holds the lock" 1 "already holds the red lock"
 script "$proj" red-guard.sh abort
 expect "abort voids the run" 0 "the red lock is released"
 hook "$proj" red-lock.sh "$(write_input "$proj/src/tally/core.py")"; silent "abort releases the lock"
@@ -521,24 +527,41 @@ script "$proj" check-canon.sh
 expect "a done entry changed by hand is reported (review item 10)" 1 "entry match-one-month changed after ship-gate.sh wrote it"
 cp "$WORK/done.keep" "$proj/docs/done.md"
 echo "-- ship-gate --retire-proof: a proof leaves done only for a recorded reason (issue 7)"
-ship --retire-proof match-one-month "sh tests/red_empty.sh" --decision red-weekly
+retire() { ship --retire-proof match-one-month "$1" --decision red-weekly --owner-said "Run it weekly instead."; }
+retire "sh tests/red_empty.sh"
 expect "retiring a proof needs a decision record" 1 "no decision record"
 printf 'Date: 2026-10-24\n\n## Decided\n\n- The empty-statement check runs weekly.\n\n## Rejected\n\n- Every handoff.\n\n## Reopens if\n\n- It regresses.\n' > "$proj/docs/decisions/2026-10-24-red-weekly.md"
-ship --retire-proof match-one-month "sh tests/nope.sh" --decision red-weekly
-expect "only a command in the entry's Proof block can be retired" 1 "has no command"
+retire "sh tests/red_empty.sh"
+expect "the record must be committed" 1 "is not committed"
+rec_commit() { git -C "$proj" add -- docs/decisions/2026-10-24-red-weekly.md && git -C "$proj" commit -qm "$1" -- docs/decisions/2026-10-24-red-weekly.md; }
+rec_commit "Intake: red-weekly"
 ship --retire-proof match-one-month "sh tests/red_empty.sh" --decision red-weekly
+expect "retiring a proof needs the owner's words" 1 "usage"
+retire "sh tests/nope.sh"
+expect "only a command in the entry's Proof block can be retired" 1 "has no command"
+retire "sh tests/red_empty.sh"
+expect "a red test's command is retired only where the record names the test" 1 "does not name it"
+printf -- '- tests/red_empty.sh runs in the weekly job.\n' >> "$proj/docs/decisions/2026-10-24-red-weekly.md"
+rec_commit "Intake: red-weekly names its test"
+cp "$proj/src/tally/core.py" "$WORK/core.keep"
+sed 's/^refuse_empty = True$//' "$WORK/core.keep" > "$proj/src/tally/core.py"
+retire "sh tests/red_empty.sh"
+expect "a failing proof is never retired; it regresses" 1 "fails now"
+cp "$WORK/core.keep" "$proj/src/tally/core.py"
+retire "sh tests/red_empty.sh"
 expect "a proof is retired" 0 "is retired from match-one-month"
-check "the command left the Proof block, a Retired line cites the record, and the old entry is filed" '! grep -q "^    sh tests/red_empty.sh" "$proj/docs/done.md" && grep -q "^    sh tests/check.sh" "$proj/docs/done.md" && grep -q "^Retired: \`sh tests/red_empty.sh\` from the proof. See \`red-weekly\`." "$proj/docs/done.md" && grep -q "sh tests/red_empty.sh" "$proj"/docs/decisions/sources/retired-match-one-month-*.md'
+check "the command left the Proof block, a Retired line cites the record and the owner, the old entry is filed, all committed" '! grep -q "^    sh tests/red_empty.sh" "$proj/docs/done.md" && grep -q "^    sh tests/check.sh" "$proj/docs/done.md" && grep -q "^Retired: \`sh tests/red_empty.sh\` from the proof. See \`red-weekly\`. The owner said: \"Run it weekly instead.\"" "$proj/docs/done.md" && grep -q "sh tests/red_empty.sh" "$proj"/docs/decisions/sources/retired-match-one-month-*.md && [ "$(git -C "$proj" log -1 --format=%s)" = "serial-build: retire proof match-one-month" ] && [ -z "$(git -C "$proj" status --porcelain -- docs/done.md docs/decisions/sources)" ]'
 script "$proj" check-canon.sh
 expect "the rewritten entry carries a valid checksum" 0 "PASS  every done entry is as ship-gate.sh wrote it"
-ship --retire-proof match-one-month "sh tests/check.sh" --decision red-weekly
+retire "sh tests/check.sh"
 expect "a gate's last proof cannot be retired" 1 "is the last proof"
 cp "$proj/docs/done.md" "$WORK/done.retired"
 sed 's/^Accepted: .*/Accepted: "edited"/' "$WORK/done.retired" > "$proj/docs/done.md"
-ship --retire-proof match-one-month "sh tests/check.sh" --decision red-weekly
+retire "sh tests/check.sh"
 expect "nothing is retired from an entry changed by hand" 1 "not as ship-gate.sh wrote it"
+git -C "$proj" reset -q HEAD~3
 cp "$WORK/done.keep" "$proj/docs/done.md"
-rm -f "$proj"/docs/decisions/sources/retired-match-one-month-*.md
+rm -f "$proj/docs/decisions/2026-10-24-red-weekly.md" "$proj"/docs/decisions/sources/retired-match-one-month-*.md
 hook "$proj" session-start.sh '{"session_id":"s3"}'
 expect "with no written-out gate left, session start names the next one-line gate" 0 "next one-line gate is two-accounts"
 commit "$proj" "Handoff: match-one-month shipped"
@@ -585,7 +608,7 @@ script "$rf" red-file.sh --output "$WORK/agent1.md" --worktree "$wt3" --cost "26
 expect "red-file verifies, imports, files the output, and drafts the run" 0 "Red run: $today, 4 attempts, 2 findings. Source: \`red-rf-gate-$today\`. Cost: 26 min, 1.4M tokens."
 check "each kept finding carries its test's blob hash" 'grep -q "^- red-empty-statement: an empty statement crashes instead of being refused. Test: \`tests/red_rf_a.sh@$(git -C "$rf" hash-object tests/red_rf_a.sh)\`. Reproduce: \`sh tests/red_rf_a.sh\`." "$rf/docs/plan.md"' "$(cat "$rf/docs/plan.md")"
 check "a finding whose command passes when re-run is recorded as a fruitless attempt" 'grep -q "^- the header row is counted: re-run by red-file.sh, \`sh tests/red_rf_b.sh\` passed, so it is not a finding" "$rf/docs/plan.md"'
-check "the raw output is filed verbatim, the worktree and its branch are gone, the lock is released" '[ -f "$rf/docs/decisions/sources/red-rf-gate-$today.md" ] && grep -q "red-rf-mirage" "$rf/docs/decisions/sources/red-rf-gate-$today.md" && [ ! -d "$wt3" ] && ! git -C "$rf" branch --list "worktree-agent-*" | grep -q . && [ ! -f "$(cd "$rf" && SB_ROOT=$(pwd) && SB_PLUGIN=$P && . "$S/lib.sh" && sb_state_dir)/red-lock" ]'
+check "the raw output is filed verbatim, the worktree and its branch are gone, the lock is released" '[ -f "$rf/docs/decisions/sources/red-rf-gate-$today.md" ] && grep -q "red-rf-mirage" "$rf/docs/decisions/sources/red-rf-gate-$today.md" && [ ! -d "$wt3" ] && ! git -C "$rf" branch --list "worktree-agent-*" | grep -q . && [ ! -f "$(cd "$rf" && SB_ROOT=$(pwd) && SB_PLUGIN=$P && . "$S/lib.sh" && sb_red_lock)" ]'
 rm -f "$rf/tests/red_rf_b.sh"
 commit "$rf" "Red: rf-gate, 2 findings"
 script "$rf" red-status.sh
@@ -625,6 +648,38 @@ expect "two lanes become one run" 0 "4 attempts, 2 findings"
 check "a slug two lanes both used is made unique, and the source holds both lanes" 'grep -q "^- red-lane-bug: the core lane" "$rf/docs/plan.md" && grep -q "^- red-lane-bug-2: the web lane" "$rf/docs/plan.md" && grep -q "^## Lane 2" "$rf"/docs/decisions/sources/red-rf-gate-$today-2.md'
 git -C "$rf" reset -q --hard HEAD && git -C "$rf" clean -qfd -- tests docs
 script "$rf" red-guard.sh abort
+
+echo "-- red-file refuses rather than lose a finding (review of issues 2, 3)"
+rf_reset() { git -C "$rf" reset -q --hard HEAD && git -C "$rf" clean -qfd -- tests docs; for w in "$rf"/.claude/worktrees/*; do [ -e "$w/.git" ] && git -C "$rf" worktree remove --force "$w"; done; script "$rf" red-guard.sh abort; }
+script "$rf" red-guard.sh snapshot
+printf '## Findings\n- red-total_off: the total is off by one.\n  Test: tests/x.sh. Reproduce: `sh tests/x.sh`.\n1. red-c\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/odd.md"
+script "$rf" red-file.sh --output "$WORK/odd.md"
+expect "a finding line it cannot read stops everything, naming it" 1 "1. red-c"
+check "and nothing was done: the lock is still held, nothing filed" '! ls "$rf"/docs/decisions/sources/red-rf-gate-$today-2.md >/dev/null 2>&1 && git -C "$rf" diff --quiet -- docs/plan.md' 
+wl="$rf/.claude/worktrees/agent-left"
+git -C "$rf" worktree add -q --detach "$wl" HEAD && printf 'grep -q never src/tally/core.py\n' > "$wl/tests/red_left.sh"
+printf '## Findings\n* red-Total_Off: the total is off by one.\n  Test: `tests/red_left.sh`. Reproduce: `sh tests/red_left.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/left.md"
+script "$rf" red-file.sh --output "$WORK/left.md"
+expect "an agent worktree with changes that was not passed stops everything" 1 "were not passed with --worktree"
+script "$rf" red-file.sh --output "$WORK/left.md" --worktree "$wl"
+expect "a near-miss bullet is read, its slug normalised" 0 "- red-total-off: the total is off by one."
+script "$rf" red-status.sh --record
+expect "red-status --record passes a well-formed uncommitted draft" 0 "well formed; commit it"
+rf_reset
+script "$rf" red-guard.sh snapshot
+printf '## Findings\n- red-ghost: it breaks.\n  Test: tests/red_ghost.sh. Reproduce: `sh tests/red_ghost.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/ghost.md"
+script "$rf" red-file.sh --output "$WORK/ghost.md"
+expect "a finding whose test is not in the project is refused, not recorded as fruitless" 1 "tests are not in the project"
+check "nothing was recorded for it" '! grep -q "red-ghost" "$rf/docs/plan.md"'
+rf_reset
+script "$rf" red-guard.sh snapshot
+wm="$rf/.claude/worktrees/agent-m"
+git -C "$rf" worktree add -q --detach "$wm" HEAD && printf 'grep -q never src/tally/core.py\n' > "$wm/tests/red_m.sh"
+printf '## Findings\n- red-mutate: it breaks.\n  Test: tests/red_m.sh. Reproduce: `echo x >> src/tally/core.py; sh tests/red_m.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/mut.md"
+script "$rf" red-file.sh --output "$WORK/mut.md" --worktree "$wm"
+expect "a reproduce command that changes product code stops the filing" 1 "changed files that are not tests"
+check "and names the file" 'printf "%s" "$out" | grep -q "src/tally/core.py"'
+rf_reset
 
 echo "-- a voided run is recorded with the next filing, and the done entry states the cost (issue 2)"
 script "$rf" red-guard.sh snapshot
@@ -687,6 +742,28 @@ check "the project's own plan and branch are untouched by the draft" '[ ! -f "$r
 script "$rf" plan-draft.sh drop next-gate
 expect "drop removes the draft" 0 "dropped"
 check "the branch and worktree are gone" '! git -C "$rf" show-ref -q --verify refs/heads/serial-build/draft-next-gate && [ ! -d "$dwt" ]'
+echo "-- plan-draft from a linked worktree, after a purged temp folder, and at a Later list (review of issue 4)"
+lw="$WORK/rf-linked"
+git -C "$rf" worktree add -q -b side "$lw" HEAD
+printf '\n### side-gate\n\nBuilds: x.\n\nDemo: x. Break it: y.\n\nDepends on: none.\n\nDecided: none.\n\nDecide by proof: none.\n\nOpen: none.\n\nQA: x.\n\nTried to break: y.\n\nAcceptance: x.\n\nLater:\n- one-later: a later gate.\n' >> "$lw/docs/roadmap.md"
+(cd "$lw" && git add -A && git commit -qm "side gate")
+script "$lw" plan-draft.sh start side-gate
+expect "a project that is itself a linked worktree drafts from its own roadmap" 0 "/serial-build:gate --draft side-gate"
+sdw=$(printf '%s\n' "$out" | sed -n 's/^plan-draft: the draft of side-gate will be written in \(.*\), on the branch.*/\1/p')
+hook "$sdw" session-start.sh '{"session_id":"d1","source":"startup"}'
+expect "session start inside a draft worktree names the draft, not the active gate" 0 "drafted ahead"
+printf '# side-gate\n\nAcceptance: x.\n' > "$sdw/docs/plan.md"
+(cd "$sdw" && "$SHELL_UNDER_TEST" "$S/plan-draft.sh" save side-gate) > "$WORK/out" 2>&1; code=$?; out=$(cat "$WORK/out")
+expect "the draft session saves back to the linked worktree it came from" 0 "is saved"
+printf -- '- two-later: another.\n' >> "$lw/docs/roadmap.md"
+script "$lw" plan-draft.sh delta side-gate
+expect "a gate written out under the stage's Later list is not a change to the drafted gate" 0 "nothing the draft of side-gate depends on changed"
+rm -rf "$sdw"
+script "$lw" plan-draft.sh drop side-gate
+expect "drop works after the temp folder was purged" 0 "dropped"
+check "and the branch is really gone" '! git -C "$rf" show-ref -q --verify refs/heads/serial-build/draft-side-gate'
+git -C "$rf" worktree remove --force "$lw"
+
 git -C "$rf" checkout -q -- docs/roadmap.md
 
 echo "-- ship-gate --regress keeps the gate in the ledger (review item 6)"

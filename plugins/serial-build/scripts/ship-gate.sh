@@ -23,13 +23,18 @@
 #     roadmap as a regression gate, files the failing output and the old entry
 #     under the decision sources, and only then removes its done entry.
 #
-#   ship-gate.sh --retire-proof <gate-slug> "<proof command>" --decision <slug>
+#   ship-gate.sh --retire-proof <gate-slug> "<proof command>" --decision <slug> --owner-said "<words>"
 #     Removes one command from a shipped gate's Proof block, so the handoff stops
 #     re-running a proof that became redundant or moved to a schedule. Refuses
-#     unless the entry is as ship-gate wrote it, the command is in its Proof block
-#     and is not the last one, and a decision record docs/decisions/*-<slug>.md
-#     says why. Files the old entry under the decision sources, adds a
-#     "Retired:" line citing the record, and writes the entry's new checksum.
+#     unless: the entry is as ship-gate wrote it; the command is in its Proof
+#     block and is not the last one; it passes now (a failing proof is a
+#     regression, never a retirement); a committed decision record
+#     docs/decisions/*-<slug>.md says why, and names every test file the command
+#     runs (so a red finding's test is retired only where the record says what
+#     still runs it); and the owner's words are given. Files the old entry under
+#     the decision sources, adds a "Retired:" line citing the record and the
+#     owner's words, writes the entry's new checksum, and commits as
+#     "serial-build: retire proof <gate-slug>".
 #
 # The owner's acceptance and demotions are their acts; this script only records
 # them. Pass words they actually said, never a paraphrase. Run from the project root.
@@ -137,12 +142,14 @@ fi
 
 if [ "${1:-}" = --retire-proof ]; then
   slug=${2:-} cmd=${3:-}
-  [ -n "$slug" ] && [ -n "$cmd" ] && [ "${4:-}" = --decision ] && [ -n "${5:-}" ] \
-    || refuse 'usage: ship-gate.sh --retire-proof <gate-slug> "<proof command>" --decision <decision-slug>'
-  dec=$5
+  [ -n "$slug" ] && [ -n "$cmd" ] && [ "${4:-}" = --decision ] && [ -n "${5:-}" ] && [ "${6:-}" = --owner-said ] && [ -n "${7:-}" ] \
+    || refuse 'usage: ship-gate.sh --retire-proof <gate-slug> "<proof command>" --decision <decision-slug> --owner-said "<the owner'"'"'s words, verbatim>"'
+  dec=$5 said=$7
   [ -f "$done" ] && grep -qx "## $slug" "$done" || refuse "docs/done.md has no entry \"## $slug\""
   record=$(ls docs/decisions/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-"$dec".md 2>/dev/null | head -n 1)
   [ -n "$record" ] || refuse "no decision record docs/decisions/<date>-$dec.md; a proof is retired only for a reason the owner can read, so record the decision first (through /serial-build:intake)"
+  git ls-files --error-unmatch -- "$record" >/dev/null 2>&1 && git diff --quiet HEAD -- "$record" \
+    || refuse "$record is not committed as it stands; a retirement cites a record the history holds"
   # The entry as check-canon.sh reads it: from its heading to its checksum line,
   # blank lines kept only between text.
   entry=$(awk -v h="## $slug" '
@@ -156,9 +163,24 @@ if [ "${1:-}" = --retire-proof ]; then
   proof=$(printf '%s\n' "$entry" | awk '/^Proof:/ { on = 1; next } on && /^    / { print substr($0, 5); next } on && NF { exit }')
   printf '%s\n' "$proof" | grep -qxF -- "$cmd" || refuse "the Proof block of $slug has no command \"$cmd\"; give it exactly as listed"
   [ "$(printf '%s\n' "$proof" | grep -c .)" -gt 1 ] || refuse "\"$cmd\" is the last proof of $slug; a shipped gate keeps at least one proof the handoff re-runs"
+  if sb_load_config && [ "$(sb_count "$SB_CFG" red.test_paths)" -gt 0 ]; then
+    set -f
+    for w in $cmd; do
+      w=${w%%::*}
+      [ -f "$w" ] || continue
+      if printf '%s\n' "$w" | sb_filter "$SB_CFG" red.test_paths | grep -q . && ! grep -qF -- "$w" "$record"; then
+        refuse "\"$cmd\" runs the test $w, and $record does not name it; say in the record which proof still runs it, or that it is retired on purpose"
+      fi
+    done
+    set +f
+  fi
+  if ! (sh -c "$cmd") > /dev/null 2>&1; then
+    refuse "\"$cmd\" fails now, so $slug has regressed; a failing proof is never retired. Move the gate back with: ship-gate.sh --regress $slug --failed \"<the failing output>\""
+  fi
   newf=$(mktemp "${TMPDIR:-/tmp}/sb-retire.XXXXXX") || exit 1
   trap 'rm -f "$newf" "$done.sb-tmp"' EXIT
-  printf '%s\n' "$entry" | CMD=$cmd awk -v add="Retired: \`$cmd\` from the proof. See \`$dec\`." '
+  printf '%s\n' "$entry" | CMD=$cmd SAID=$said awk -v add="Retired: \`$cmd\` from the proof. See \`$dec\`. The owner said: " '
+    BEGIN { add = add "\"" ENVIRON["SAID"] "\"" }
     /^Proof:/ { on = 1 } on && $0 == "    " ENVIRON["CMD"] && !gone { gone = 1; next } on && NF && !/^    / && !/^Proof:/ { on = 0 }
     /^Accepted: / && !put { print add; print ""; put = 1 }
     { print }' > "$newf"
@@ -171,6 +193,8 @@ if [ "${1:-}" = --retire-proof ]; then
     $0 == h { while ((getline l < f) > 0) print l; print ""; print mark; skip = 1; next }
     skip && /^<!-- ship-gate [0-9-]+ -->$/ { skip = 0; next }
     !skip' "$done" > "$done.sb-tmp" && mv "$done.sb-tmp" "$done"
+  git add -- "$done" "docs/decisions/sources/$src.md" && git commit -q -m "serial-build: retire proof $slug" -- "$done" "docs/decisions/sources/$src.md" \
+    || refuse "the entry is rewritten but could not be committed; commit docs/done.md and the source yourself"
   echo "ship-gate: \`$cmd\` is retired from $slug's proof (See \`$dec\`); the old entry is filed as the decision source $src. The handoff no longer re-runs it."
   exit 0
 fi

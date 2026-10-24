@@ -23,10 +23,12 @@ Nothing stays in done on faith.
 A proof that no longer earns its re-run at every handoff (one another proof line already runs,
 such as a single test file the suite runs; or one the project moved to a weekly schedule) is
 retired, never skipped:
-`sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --retire-proof <gate-slug> "<command, exactly as listed>" --decision <slug>`.
-It needs a dated decision record saying why (file it through `/serial-build:intake` first) and
-refuses to retire a gate's last proof. A red finding's reproduce command is retired only when
-that record names the proof that still runs its test.
+`sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --retire-proof <gate-slug> "<command, exactly as listed>" --decision <slug> --owner-said "<their words, verbatim>"`.
+It is the owner's call, so ask them first. It needs a committed, dated decision record saying why
+(file it through `/serial-build:intake` first) that names every test file the command runs, so a
+red finding's test is retired only where the record says what still runs it. It refuses a gate's
+last proof and a proof that fails now: a failing proof is a regression, never a retirement. It
+commits the change itself.
 
 ## 2. The red lane's verdict
 

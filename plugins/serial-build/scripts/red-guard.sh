@@ -52,7 +52,8 @@ snap="$state/red-snapshot"
 marker="$state/red-snapshot.time"
 common=$(cd "$(git rev-parse --git-common-dir)" && pwd -P)
 
-lock="$state/red-lock"
+lock=$(sb_red_lock)
+mkdir -p "$(dirname "$lock")"
 head_of() { git rev-parse -q --verify HEAD 2>/dev/null || echo none; }
 top=$(git rev-parse --show-toplevel)
 
@@ -114,6 +115,10 @@ inventory() {
 
 case "$mode" in
   snapshot)
+    if [ -f "$lock" ]; then
+      echo "red-guard: a red run already holds the red lock; finish it (red-file.sh, or red-guard.sh verify) or void it with red-guard.sh abort before a new snapshot, or what was written in between would never be checked" >&2
+      exit 1
+    fi
     dirty=$(sb_changed_files)
     if [ -n "$dirty" ]; then
       printf 'red-guard: commit the gate'"'"'s work first. The red-breaker agent attacks a worktree cut from the last commit, so these uncommitted changes would go unattacked:\n%s\n' "$dirty" >&2

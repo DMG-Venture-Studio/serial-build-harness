@@ -43,8 +43,9 @@ the active one:
 1. From the project, `plan-draft.sh start <gate-slug>` cuts a branch and a worktree outside the
    project and prints the command that launches the draft session there in the background. A
    session outside the project folder cannot void a red run or hit the red lock.
-2. In that session ("$ARGUMENTS" is `--draft <gate-slug>`): the plan there is gate N's, so skip
-   this step's one-plan stop. Run steps 2 to 4 for the named gate without plan mode (nobody is
+2. In that session ("$ARGUMENTS" is `--draft <gate-slug>`): skip the rest of step 1 entirely
+   (the plan there is gate N's, and the draft's status reads "in progress" because this session
+   is the one making it). Run steps 2 to 4 for the named gate without plan mode (nobody is
    there to approve, and the worktree is not the project), writing the draft to `docs/plan.md`
    in the worktree. Then run `plan-draft.sh save <gate-slug>`, which commits it on the draft's
    branch with the commit it was reviewed against. Never call ExitPlanMode or ask the owner; end

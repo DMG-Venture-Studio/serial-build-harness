@@ -50,7 +50,8 @@ worktree shares (config, exclude rules, hooks), so step 4 can prove none of them
 
 It also takes the red lock. Until verify or abort releases it, a hook refuses every agent but the
 red-breaker any write into the project and any shell command not on a short read-only list. This
-session can still read, run `git status` and `ps`, stop a stray process, and run the red scripts.
+session can still read, write files outside the project, run `git status` and `ps`, stop a stray
+process, and run `red-guard.sh`, `red-pack.sh`, and `red-file.sh`; nothing else.
 If a run hangs, or a session died holding the lock, `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-guard.sh" abort`
 releases it and voids the run.
 
@@ -155,9 +156,14 @@ re-proven by step 5, as any other.
 
 The script checks that each finding fails now; only you can check that it fails for the reason
 the agent gave. Read each recorded finding against the raw output and run its test once. One that
-fails for another reason (a typo in the test, a missing fixture) is not a finding: move its bullet
-under "Attempts that found nothing" with what happened, and remove its test file if nothing else
-uses it. Change nothing else in the drafted section.
+fails for another reason (a typo in the test, a missing fixture) is not a finding. Before the
+first commit, rewrite its bullet under "Attempts that found nothing" in the form red-file.sh uses,
+`- <what it claimed>: <what happened instead> (red-<slug>)`, so it no longer starts with
+`- red-`; lower the run line's `<n> findings` by one (the attempts count stays); and remove its
+test file if nothing else uses it. Change nothing else. Then run
+`sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh" --record`, which checks the uncommitted record,
+and fix the section until it passes. Once committed, a run's line and findings can never change:
+any edit reopens every finding in it.
 
 ## 7. What the record holds
 
@@ -195,9 +201,10 @@ if the gate is being built on its own branch, commit there. If the work is on th
 say before committing that continuous integration and any pre-commit test hook will fail until
 the fixes land, and ask the owner whether to commit now or on a new branch for the gate.
 
-Then run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh"`. Its record checks must pass (fix the
-section, commit, and rerun until they do); its findings are expected to be OPEN until the builder
-fixes them.
+Run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh" --record` before this commit, never after:
+a committed run cannot be corrected. After committing, run
+`sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh"`; its findings are expected to be OPEN until the
+builder fixes them.
 
 ## After the fixes: the delta run
 
@@ -223,9 +230,11 @@ It records its own `Red run:` block, as any later run does.
   `sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --demote red-<slug> --owner-said "<their answer, verbatim>"`,
   passing exactly what they chose or typed. It records and commits the demotion; a typed
   "Demoted" line does not count. With no owner to ask (a headless run), leave the finding open.
-- **A fix had to change the test** (an import moved): run this skill again for those findings,
-  all of them in one judge run. Brief the red-breaker agent with each old and new test and ask
-  whether each new one still asserts the same behaviour; file its answer as one decision source.
+- **A fix had to change the test** (an import moved): launch one judge run for those findings,
+  all of them together. It is not a red run: skip steps 2 to 8 (no snapshot, no red-file.sh, no
+  Red run line). Brief the red-breaker agent with each old and new test and ask whether each new
+  one still asserts the same behaviour; save its answer verbatim yourself as
+  `docs/decisions/sources/red-repin-<gate-slug>-<YYYY-MM-DD>.md` under a short header.
   For the ones it says yes to, run
   `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-repin.sh" red-<slug> [red-<slug>...] --source <that source's slug>`.
   The script refuses, re-pinning none, unless each changed test still fails on the commit that

@@ -36,12 +36,15 @@
 # what is remembered; ship-gate.sh always passes it, since a remembered verdict is
 # a file in the temp folder and the ship must not rest on one. A change outside
 # git's view (an ignored dependency folder) needs --fresh to be seen.
-# Usage: red-status.sh [--fresh] [project root, default: the working directory]
+# --record checks only that the record is well formed, on the uncommitted plan,
+# so a drafted Red run can be fixed before its first commit; after that, any
+# change to a run reopens its findings.
+# Usage: red-status.sh [--fresh | --record] [project root, default: the working directory]
 set -u
 SB_PLUGIN=$(cd "$(dirname "$0")/.." && pwd)
 . "$SB_PLUGIN/scripts/lib.sh"
-fresh=
-[ "${1:-}" = --fresh ] && { fresh=1; shift; }
+fresh= record=
+case "${1:-}" in --fresh) fresh=1; shift ;; --record) record=1; fresh=1; shift ;; esac
 root=${1:-$(sb_project_root)}
 cd "$root" || exit 1
 plan=docs/plan.md
@@ -107,6 +110,10 @@ if [ -n "$problems" ]; then
   printf 'red-status: the red record for %s is not credible, so it does not hand off:\n%s' "$gate" "$(printf '%s' "$problems" | sed 's/^/  /')"
   echo
   exit 1
+fi
+if [ -n "$record" ]; then
+  echo "red-status: the red record for $gate is well formed; commit it. (A run's line and findings cannot change once committed, so fix them before.)"
+  exit 0
 fi
 
 # History since the current plan was added: the commits that may have recorded
