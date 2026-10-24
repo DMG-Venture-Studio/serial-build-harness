@@ -15,7 +15,7 @@ S="$P/scripts"
 FIX="$REPO/tests/fixtures"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/sb-tests.XXXXXX")
 WORK=$(cd "$WORK" && pwd -P)
-trap 'rm -rf "$WORK"' EXIT
+trap '[ -n "${KEEP:-}" ] || rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR"
 unset CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT
@@ -327,7 +327,7 @@ for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'c
   hook "$proj" red-lock.sh "$(main_bash "$c")"
   expect "the lock refuses for the builder: $c" 2 "is refused while it is held"
 done
-for c in 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'FOO=1 date'; do
+for c in 'sh /x/scripts/red-file.sh --output /tmp/o.md --cost \"26 min, 1.4M tokens\"' 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'FOO=1 date'; do
   hook "$proj" red-lock.sh "$(main_bash "$c")"; silent "the lock allows for the builder: $c"
 done
 hook "$proj" session-start.sh '{"session_id":"s4","source":"startup"}'
@@ -549,6 +549,79 @@ echo "-- a red slug reused by the next gate (review item 5)"
   printf -- '- red-empty-statement: the second account'"'"'s empty statement is dropped silently. Test: `tests/red_empty.sh@%s`. Reproduce: `sh tests/red_empty.sh`.\n\nAttempts that found nothing:\n- none\n' "$(git -C "$proj" hash-object tests/red_empty.sh)"; } > "$proj/docs/plan.md"
 commit "$proj" "Red: two-accounts, 1 findings"
 status; expect "the reused slug is judged on this plan's own record" 0 "1 of 1 red findings resolved"
+
+echo "-- red-file: one call from the agents' output to a drafted Red run (issue 2)"
+rf="$WORK/rf"
+cp -R "$proj" "$rf"
+today=$(date +%Y-%m-%d)
+git -C "$rf" rm -q docs/plan.md && git -C "$rf" commit -qm "Handoff: two-accounts shipped"
+printf '# rf-gate\n\nAcceptance: Ada can say it refuses an empty statement.\n\nProof:\n\n    sh tests/check.sh\n\nTried to break (the red lane attempts at least these):\n- an empty statement\n- a broken neighbour\n' > "$rf/docs/plan.md"
+commit "$rf" "Plan: rf-gate"
+script "$rf" red-guard.sh snapshot
+wt3="$rf/.claude/worktrees/agent-rf"
+git -C "$rf" worktree add -q -b worktree-agent-rf "$wt3" HEAD
+printf 'grep -q fixed_one src/tally/core.py\n' > "$wt3/tests/red_rf_a.sh"
+printf 'grep -q fixed_two src/tally/core.py\n' > "$wt3/tests/red_rf_c.sh"
+printf 'exit 0\n' > "$wt3/tests/red_rf_b.sh"
+cat > "$WORK/agent1.md" <<'EOF'
+## Findings
+- red-empty-statement: an empty statement crashes instead of being refused.
+  Test: tests/red_rf_a.sh. Reproduce: `sh tests/red_rf_a.sh`.
+  Seen: exit 1.
+- red-rf-neighbour: a broken neighbour drops the valid file.
+  Test: `tests/red_rf_c.sh`. Reproduce: `sh tests/red_rf_c.sh`.
+  Seen: exit 1.
+- red-rf-mirage: the header row is counted.
+  Test: tests/red_rf_b.sh. Reproduce: `sh tests/red_rf_b.sh`.
+  Seen: exit 1.
+
+## Attempts that found nothing
+- a file with only a header: refused, naming the missing rows.
+
+## Files written
+- tests/red_rf_a.sh
+EOF
+script "$rf" red-file.sh --output "$WORK/agent1.md" --worktree "$wt3" --cost "26 min, 1.4M tokens"
+expect "red-file verifies, imports, files the output, and drafts the run" 0 "Red run: $today, 4 attempts, 2 findings. Source: \`red-rf-gate-$today\`. Cost: 26 min, 1.4M tokens."
+check "each kept finding carries its test's blob hash" 'grep -q "^- red-empty-statement: an empty statement crashes instead of being refused. Test: \`tests/red_rf_a.sh@$(git -C "$rf" hash-object tests/red_rf_a.sh)\`. Reproduce: \`sh tests/red_rf_a.sh\`." "$rf/docs/plan.md"' "$(cat "$rf/docs/plan.md")"
+check "a finding whose command passes when re-run is recorded as a fruitless attempt" 'grep -q "^- the header row is counted: re-run by red-file.sh, \`sh tests/red_rf_b.sh\` passed, so it is not a finding" "$rf/docs/plan.md"'
+check "the raw output is filed verbatim, the worktree and its branch are gone, the lock is released" '[ -f "$rf/docs/decisions/sources/red-rf-gate-$today.md" ] && grep -q "red-rf-mirage" "$rf/docs/decisions/sources/red-rf-gate-$today.md" && [ ! -d "$wt3" ] && ! git -C "$rf" branch --list "worktree-agent-*" | grep -q . && [ ! -f "$(cd "$rf" && SB_ROOT=$(pwd) && SB_PLUGIN=$P && . "$S/lib.sh" && sb_state_dir)/red-lock" ]'
+rm -f "$rf/tests/red_rf_b.sh"
+commit "$rf" "Red: rf-gate, 2 findings"
+script "$rf" red-status.sh
+expect "the drafted record is credible, and its findings open" 1 "2 of 2 red findings are open"
+script "$rf" red-status.sh
+expect "asking again on the same tree answers from memory" 1 "not re-run"
+script "$rf" red-status.sh --fresh
+case "$out" in *"not re-run"*) no "--fresh re-runs" "$out" ;; *) ok "--fresh re-runs" ;; esac
+
+echo "-- a voided run is recorded with the next filing, and the done entry states the cost (issue 2)"
+script "$rf" red-guard.sh snapshot
+echo planted >> "$rf/src/tally/core.py"
+printf '## Findings\nFindings: none\n\n## Attempts that found nothing\n- a retry after a failure: the second run matched the first.\n' > "$WORK/agent2.md"
+script "$rf" red-file.sh --output "$WORK/agent2.md" --cost "9 min, 0.5M tokens"
+expect "a run red-guard voids records nothing in the project" 1 "the run is void and nothing was recorded"
+check "no source was filed for the void" '[ ! -f "$rf/docs/decisions/sources/red-rf-gate-$today-2.md" ]'
+git -C "$rf" checkout -q -- src/tally/core.py
+script "$rf" red-guard.sh snapshot
+script "$rf" red-file.sh --output "$WORK/agent2.md" --cost "12 min, 0.6M tokens"
+expect "the next run is filed" 0 "Red run: $today, 1 attempts, 0 findings"
+check "with the void recorded above it" 'grep -q "^Voided red run: $today, 9 min, 0.5M tokens. Why: src/tally/core.py changed, and it is not a test." "$rf/docs/plan.md"' "$(cat "$rf/docs/plan.md")"
+commit "$rf" "Red: rf-gate, delta run"
+
+echo "-- re-pinning several findings in one commit (issue 2)"
+echo 'fixed_one = fixed_two = True' >> "$rf/src/tally/core.py"
+printf '# moved\ngrep -q fixed_one src/tally/core.py\n' > "$rf/tests/red_rf_a.sh"
+printf '# moved\ngrep -q fixed_two src/tally/core.py\n' > "$rf/tests/red_rf_c.sh"
+echo "# Source: the breaker confirms both re-pinned tests" > "$rf/docs/decisions/sources/red-rf-confirm.md"
+script "$rf" red-repin.sh red-empty-statement red-rf-neighbour --source red-rf-confirm
+expect "two findings re-pin in one call" 0 "red-rf-neighbour re-pinned to tests/red_rf_c.sh@"
+check "in one commit naming both" '[ "$(git -C "$rf" log -1 --format=%s)" = "serial-build: re-pin red-empty-statement red-rf-neighbour" ] && [ -z "$(git -C "$rf" status --porcelain -- tests docs/plan.md)" ]'
+script "$rf" red-status.sh
+expect "both resolve once the code is fixed" 0 "2 of 2 red findings resolved"
+script "$rf" ship-gate.sh rf-gate --accepted "It refuses the empty one."
+expect "the gate ships" 0 "moved to docs/done.md"
+check "the done entry counts the voided run and states each run's cost" 'grep -q "over 2 run(s) and 1 voided run(s)" "$rf/docs/done.md" && grep -q "red lane cost: run 1: 26 min, 1.4M tokens; run 2: 12 min, 0.6M tokens; voided: $today, 9 min, 0.5M tokens" "$rf/docs/done.md"' "$(grep "Tried to break" "$rf/docs/done.md")"
 
 echo "-- ship-gate --regress keeps the gate in the ledger (review item 6)"
 cp "$proj/docs/roadmap.md" "$WORK/roadmap.keep"; cp "$proj/docs/done.md" "$WORK/done.keep2"

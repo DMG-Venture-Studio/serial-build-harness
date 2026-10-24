@@ -33,6 +33,8 @@ that record names the proof that still runs its test.
 If `docs/plan.md` exists, run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh"` and quote its
 output. It checks that the red record is credible (every attempt listed, the raw output filed)
 and runs each finding's reproduce command against the test exactly as the red lane wrote it.
+It remembers its verdict for the exact tree, so asking again on an unchanged tree answers at once;
+pass `--fresh` only after a change git cannot see, such as a reinstalled dependency folder.
 Exit 1 means the gate does not ship this session: either there is no credible red run (run
 `/serial-build:red`), or a finding is open (the builder fixes the code; deleting, weakening, or
 editing a red test or its line reopens the finding rather than resolving it; a finding the owner

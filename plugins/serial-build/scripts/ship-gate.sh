@@ -182,7 +182,7 @@ accepted=$3
 active=$(awk '/^# /{print substr($0, 3); exit}' "$plan")
 [ "$active" = "$slug" ] || refuse "docs/plan.md is the plan for $active, not $slug"
 
-if ! red=$(sh "$SB_PLUGIN/scripts/red-status.sh" "$SB_ROOT"); then
+if ! red=$(sh "$SB_PLUGIN/scripts/red-status.sh" --fresh "$SB_ROOT"); then
   printf '%s\n' "$red" >&2
   refuse "$slug does not ship while the red lane's record is not clear (above)."
 fi
@@ -220,6 +220,9 @@ fi
 attempts=$(rows RUN | awk -F '\t' '{ t += $3 } END { print t + 0 }')
 runs=$(rows RUN | grep -c .)
 sources=$(rows RUN | cut -f 5 | grep -v '^-$' | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+voids=$(rows VOID | grep -c .)
+costs=$( { rows COST | awk -F '\t' '{ print "run " $2 ": " $3 }'
+  rows VOID | cut -f 2 | sed 's/^Voided red run: */voided: /; s/\.$//'; } | awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }')
 join() { awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }'; }
 guarded=$(rows FIND | awk -F '\t' '!seen[$3]++ { b = $6; sub(/^- red-[a-z0-9-]*: /, "", b); sub(/[. ]*Test: `.*/, "", b); print $3 " (" b ")" }' \
   | while IFS= read -r g; do is_demoted "${g%% *}" || printf '%s\n' "$g"; done | join)
@@ -233,7 +236,10 @@ demoted=$(rows DEMOTE | cut -f 3 | sed 's/^Demoted //' | join)
     echo
   fi
   [ -n "$manual" ] && printf '%s\n\n' "$manual"
-  printf 'Tried to break: %s attempts by the red lane over %s run(s), raw output filed as %s; ' "$attempts" "$runs" "${sources:-no source}"
+  printf 'Tried to break: %s attempts by the red lane over %s run(s)' "$attempts" "$runs"
+  [ "$voids" -gt 0 ] && printf ' and %s voided run(s)' "$voids"
+  printf ', raw output filed as %s; ' "${sources:-no source}"
+  [ -n "$costs" ] && printf 'red lane cost: %s; ' "$costs"
   if [ -n "$guarded" ]; then printf 'findings now guarded by the proof above: %s' "$guarded"; else printf 'none found'; fi
   [ -n "$demoted" ] && printf '; demoted by the owner: %s' "$demoted"
   printf '.\n\nAccepted: "%s"\n' "$accepted"

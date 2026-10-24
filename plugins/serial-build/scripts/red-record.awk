@@ -8,6 +8,8 @@
 #   DEMOTE  <red-slug> <line>
 #   REPIN   <red-slug> <test path@blob> <line>
 #   ORPHAN  <findings above the first run line>
+#   COST    <run n> <what the run cost, from "Cost: ..." on its run line>
+#   VOID    <the "Voided red run:" line>   (a run red-guard or red-import threw away)
 #
 # A finding bullet may wrap: indented lines after it belong to it.
 
@@ -42,8 +44,10 @@ bullet != "" && /^[ \t]+[^ \t]/ { bullet = bullet " " trim($0); next }
   N[run] = field($0, "[0-9]+ attempts?", " attempts?$")
   D[run] = field($0, "[0-9]+ findings?", " findings?$")
   S[run] = field($0, "Source: `[^`]*`", "^Source: `")
+  if (match($0, /Cost: .*$/)) { c = substr($0, RSTART + 6); sub(/\.$/, "", c); C[run] = c }
   next
 }
+/^Voided red run:/ { inatt = 0; V[++nv] = $0; next }
 /^Attempts that found nothing:/ { H[run] = 1; inatt = 1; next }
 /^- red-/ { inatt = 0; bullet = trim($0); next }
 /^- / && inatt { if ($0 !~ /^- none\.?$/) A[run]++; next }
@@ -58,4 +62,6 @@ END {
     printf "RUN\t%d\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n", r, (N[r] == "" ? "-" : N[r]), (D[r] == "" ? "-" : D[r]), (S[r] == "" ? "-" : S[r]), H[r] + 0, A[r] + 0, F[r] + 0, line[r]
   }
   if (F[0] > 0) printf "ORPHAN\t%d\n", F[0]
+  for (r = 1; r <= run; r++) if (C[r] != "") printf "COST\t%d\t%s\n", r, C[r]
+  for (i = 1; i <= nv; i++) printf "VOID\t%s\n", V[i]
 }

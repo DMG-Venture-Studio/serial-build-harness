@@ -29,14 +29,39 @@
 # from an earlier gate does not collide.
 #
 # Exit 1 when the record is not credible or any finding is open; 0 otherwise.
-# Usage: red-status.sh [project root, default: the working directory]
+#
+# The verdict is remembered for the exact tree it was computed on (the commit, the
+# plan, and every uncommitted file's content), so asking again on an unchanged tree
+# answers at once instead of re-running every reproduce command. --fresh ignores
+# what is remembered; ship-gate.sh always passes it, since a remembered verdict is
+# a file in the temp folder and the ship must not rest on one. A change outside
+# git's view (an ignored dependency folder) needs --fresh to be seen.
+# Usage: red-status.sh [--fresh] [project root, default: the working directory]
 set -u
 SB_PLUGIN=$(cd "$(dirname "$0")/.." && pwd)
 . "$SB_PLUGIN/scripts/lib.sh"
+fresh=
+[ "${1:-}" = --fresh ] && { fresh=1; shift; }
 root=${1:-$(sb_project_root)}
 cd "$root" || exit 1
 plan=docs/plan.md
 TAB=$(printf '\t')
+
+if [ -z "$fresh" ] && [ -f "$plan" ] && git rev-parse -q --verify HEAD >/dev/null 2>&1; then
+  SB_ROOT=$(pwd)
+  changed=$(sb_changed_files)
+  memo="$(sb_state_dir)/red-status-$( { git rev-parse HEAD; cksum < "$plan"; printf '%s\n' "$changed"
+    printf '%s\n' "$changed" | sed '/^$/d' | tr '\n' '\0' | xargs -0 cksum 2>/dev/null; } | sb_hash)"
+  if [ -f "$memo" ]; then
+    echo "red-status: the tree is unchanged since this verdict was computed, so it is not re-run (--fresh re-runs it)."
+    tail -n +2 "$memo"
+    exit "$(head -n 1 "$memo")"
+  fi
+  out=$(sh "$0" --fresh "$root"); code=$?
+  { printf '%s\n' "$code"; printf '%s\n' "$out"; } > "$memo"
+  printf '%s\n' "$out"
+  exit "$code"
+fi
 
 [ -f "$plan" ] || { echo "red-status: no docs/plan.md, so no active gate to check"; exit 1; }
 gate=$(awk '/^# /{print substr($0, 3); exit}' "$plan")
@@ -98,10 +123,17 @@ first_commit() {
     if git merge-base --is-ancestor "$since" "$c" 2>/dev/null; then printf '%s\n' "$c"; break; fi
   done
 }
-# made_by LINE SUBJECT: the commit that added LINE says SUBJECT.
+# made_by LINE SUBJECT: the commit that added LINE says SUBJECT. A re-pin commit
+# may name several findings ("serial-build: re-pin red-a red-b"); SUBJECT names one.
 made_by() {
   _c=$(first_commit "$1")
-  [ -n "$_c" ] && [ "$(git log -1 --format=%s "$_c")" = "$2" ]
+  [ -n "$_c" ] || return 1
+  _s=$(git log -1 --format=%s "$_c")
+  [ "$_s" = "$2" ] && return 0
+  case "$2" in "serial-build: re-pin "*) ;; *) return 1 ;; esac
+  case "$_s" in "serial-build: re-pin "*) ;; *) return 1 ;; esac
+  case " ${_s#serial-build: re-pin } " in *" ${2#serial-build: re-pin } "*) return 0 ;; esac
+  return 1
 }
 
 out=$(mktemp "${TMPDIR:-/tmp}/sb-red.XXXXXX") || exit 1
