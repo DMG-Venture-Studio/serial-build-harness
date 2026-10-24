@@ -19,6 +19,9 @@ trap 'rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR"
 unset CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT
+# The snapshot preflight refuses files written in the last two minutes, which is
+# every file here; it is switched back on where it is tested.
+export SB_RED_QUIET_MINUTES=0
 export GIT_AUTHOR_NAME=Ada GIT_AUTHOR_EMAIL=ada@example.com GIT_COMMITTER_NAME=Ada GIT_COMMITTER_EMAIL=ada@example.com
 pass=0 fail=0
 
@@ -300,6 +303,76 @@ import_case "a product-code change in the worktree voids the run, copying nothin
 check "nothing was copied from a void run" '[ ! -f "$proj/tests/red_two.sh" ]'
 import_case "a deleted test voids the run" 1 "a test, was deleted" 'rm tests/check.sh'
 import_case "a commit in the worktree voids the run" 1 "committed or started elsewhere" 'echo x > tests/x.sh; git add -A; git commit -qm x'
+
+# ---------------------------------------------------------------- red lock and preflight (issue 1)
+echo "-- the red lock and the snapshot preflight: other writers are stopped, not just caught"
+export SB_RED_QUIET_MINUTES=2
+echo "log line" > "$proj/.env"
+script "$proj" red-guard.sh snapshot
+expect "the snapshot refuses while an ignored file is still being written, naming it" 1 "something is still writing into the project"
+check "and names the file" 'printf "%s" "$out" | grep -qx ".env"' "$out"
+find "$proj/.env" "$proj/node_modules" -exec touch -t 200001010000 {} +
+script "$proj" red-guard.sh snapshot
+expect "the snapshot proceeds once nothing has written for two minutes" 0 "the red lock is held"
+export SB_RED_QUIET_MINUTES=0
+main_bash() { printf '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }
+hook "$proj" red-lock.sh "$(write_input "$proj/src/tally/core.py")"
+expect "while the lock is held the builder cannot write into the project" 2 "The red lock is held"
+hook "$proj" red-lock.sh "$(write_input "$proj/.claude/worktrees/agent-x/src/a.py")"
+expect "nor into an agent worktree" 2 "red lock is held"
+hook "$proj" red-lock.sh "$(write_input "$WORK/elsewhere/notes.md")"; silent "a write outside the project passes"
+hook "$proj" red-lock.sh "$(red_input Write "\"file_path\":\"$proj/.claude/worktrees/agent-x/tests/t.py\"")"; silent "the red-breaker agent is not locked out"
+hook "$proj" red-lock.sh "$(red_bash "uv run pytest tests/t.py")"; silent "the red-breaker agent may run its tests"
+for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'cat a | tee b' 'find . -name x -delete' 'git checkout -- .' 'sh tests/check.sh' 'make dev' 'git stash' 'ls $(rm -rf src)' 'sh /p/scripts/red-guard.sh verify; rm -rf src'; do
+  hook "$proj" red-lock.sh "$(main_bash "$c")"
+  expect "the lock refuses for the builder: $c" 2 "is refused while it is held"
+done
+for c in 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'FOO=1 date'; do
+  hook "$proj" red-lock.sh "$(main_bash "$c")"; silent "the lock allows for the builder: $c"
+done
+hook "$proj" session-start.sh '{"session_id":"s4","source":"startup"}'
+expect "session start reports a held lock and how to release it" 0 "the red lock is held"
+script "$proj" red-guard.sh verify
+expect "verify passes" 0 "nothing but tests changed"
+hook "$proj" red-lock.sh "$(write_input "$proj/src/tally/core.py")"; silent "verify releases the lock"
+script "$proj" red-guard.sh snapshot
+script "$proj" red-guard.sh abort
+expect "abort voids the run" 0 "the red lock is released"
+hook "$proj" red-lock.sh "$(write_input "$proj/src/tally/core.py")"; silent "abort releases the lock"
+script "$proj" red-guard.sh verify
+expect "abort drops the snapshot, so the aborted run cannot be verified" 1 "no snapshot"
+hook "$bare" red-lock.sh "$(write_input "$bare/src/app.py")"; silent "the lock is silent without config"
+rm -f "$proj/.env"
+
+echo "-- red-guard compares .git/config by its settings (issue 1)"
+git -C "$proj" config core.hooksPath .githooks
+guard_case "a relative core.hooksPath rewritten as the same absolute folder is no change" OK 'git -C "$proj" config core.hooksPath "$proj/.githooks"' 'git -C "$proj" config core.hooksPath .githooks'
+guard_case "a core.hooksPath pointed at another folder voids the run" ".git/config changed" 'git -C "$proj" config core.hooksPath /tmp/planted-hooks' 'git -C "$proj" config core.hooksPath .githooks'
+guard_case "any other config change voids the run" ".git/config changed" 'git -C "$proj" config alias.st status' 'git -C "$proj" config --unset alias.st'
+git -C "$proj" config --unset core.hooksPath
+
+echo "-- salvaging a voided run, and lanes that collide (issues 1, 3)"
+script "$proj" red-guard.sh snapshot
+(cd "$proj" && git worktree add -q --detach "$wt" HEAD) && echo "exit 1" > "$wt/tests/red_salvage.sh" && echo planted >> "$wt/src/tally/core.py"
+script "$proj" red-import.sh "$wt" --quarantine "$proj/q"
+expect "the quarantine folder must be outside the project" 1 "must be outside the project"
+script "$proj" red-import.sh "$wt" --quarantine "$WORK/quarantine" --remove
+expect "a voided run's tests are quarantined, not imported" 0 "quarantined, not imported"
+check "only the test is salvaged, into the quarantine, and nothing reaches the project" '[ -f "$WORK/quarantine/agent-sim/tests/red_salvage.sh" ] && [ ! -e "$WORK/quarantine/agent-sim/src/tally/core.py" ] && [ ! -e "$proj/tests/red_salvage.sh" ] && [ ! -d "$wt" ]'
+wt2="$proj/.claude/worktrees/agent-two"
+script "$proj" red-guard.sh snapshot
+(cd "$proj" && git worktree add -q --detach "$wt" HEAD && git worktree add -q --detach "$wt2" HEAD)
+echo "exit 1" > "$wt/tests/red_lane_a.sh"; echo "exit 1" > "$wt2/tests/red_lane_b.sh"
+script "$proj" red-import.sh "$wt" "$wt2"
+expect "two lanes' tests come home in one import" 0 "tests/red_lane_b.sh"
+check "both are in the project" '[ -f "$proj/tests/red_lane_a.sh" ] && [ -f "$proj/tests/red_lane_b.sh" ]'
+rm -f "$proj/tests/red_lane_a.sh" "$proj/tests/red_lane_b.sh"
+echo "exit 1" > "$wt2/tests/red_lane_a.sh"
+script "$proj" red-import.sh "$wt" "$wt2" --remove
+expect "two lanes writing the same test file void the run, copying nothing" 1 "written by two lanes"
+check "nothing was copied from the collision" '[ ! -f "$proj/tests/red_lane_a.sh" ] && [ ! -f "$proj/tests/red_lane_b.sh" ]'
+(cd "$proj" && git worktree remove --force "$wt" && git worktree remove --force "$wt2")
+script "$proj" red-guard.sh abort
 
 # ---------------------------------------------------------------- red-status
 echo "-- red-status: a finding resolves only by fixing the code"

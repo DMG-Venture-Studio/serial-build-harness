@@ -35,6 +35,9 @@ fi
 
 # A stop check that failed and has not passed since: the next session must know.
 state=$(sb_state_dir)
+if [ -f "$state/red-lock" ]; then
+  printf 'serial-build: the red lock is held: a red run is in progress, or a session died holding it. Until it is released only the red-breaker agent may write into the project. If no red run is in progress, release it (this voids that run) with: sh "%s/scripts/red-guard.sh" abort\n' "$SB_PLUGIN"
+fi
 for why in "$state"/stop-*.why; do
   [ -f "$why" ] || continue
   stamp=${why%.why}

@@ -16,6 +16,9 @@ cover only the scenario they wrote them for, and go after everything else.
   "Tried to break" list, and the test paths you may write. Break it.
 - **After fixes.** The same gate again, after the builder fixed earlier findings. Attack the fixes
   and their neighbours; a fix often moves the bug one step over.
+- **After a voided run.** The same gate again, with a quarantine folder holding the voided run's
+  tests. Judge each: write the ones that still reproduce into your own worktree as your own
+  findings, drop the rest, then go past them. Never import one unjudged.
 
 ## Rules you cannot bend
 

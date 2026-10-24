@@ -33,18 +33,28 @@ and tell the owner: "next: `/clear`, then `/serial-build:red`".
   (`node_modules`, `.venv`); `.worktreeinclude` names small ignored files to copy (`.env`).
   `/serial-build:scope` writes these; without them the breaker's tests cannot run in its worktree.
 
-## 2. Snapshot
+## 2. Snapshot, and take the red lock
 
-Run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-guard.sh" snapshot`. It records the commit, every
-ignored file in the project, and the parts of `.git` every worktree shares (config, exclude
-rules, hooks), so step 4 can prove none of them moved.
+Stop the dev stack and anything else that writes into the project first: a daemon's log, a
+watcher, a test run in another session. Then run
+`sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-guard.sh" snapshot`. It refuses, naming the file, while
+any watched ignored file was written in the last two minutes, since that writer would void the
+run. It records the commit, every ignored file in the project, and the parts of `.git` every
+worktree shares (config, exclude rules, hooks), so step 4 can prove none of them moved.
+
+It also takes the red lock. Until verify or abort releases it, a hook refuses every agent but the
+red-breaker any write into the project and any shell command not on a short read-only list. This
+session can still read, run `git status` and `ps`, stop a stray process, and run the red scripts.
+If a run hangs, or a session died holding the lock, `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-guard.sh" abort`
+releases it and voids the run.
 
 ## 3. Brief a fresh agent in its own worktree
 
-Launch the `serial-build:red-breaker` agent in the foreground with `isolation: "worktree"`, so it
-works in its own checkout of the last commit (Claude Code puts it at
-`.claude/worktrees/agent-<id>/` inside the project) and nothing it does to code reaches the
-project.
+Launch the `serial-build:red-breaker` agent with `isolation: "worktree"`, so it works in its own
+checkout of the last commit (Claude Code puts it at `.claude/worktrees/agent-<id>/` inside the
+project) and nothing it does to code reaches the project. Whether the harness runs it in the
+foreground or the background, the red lock keeps everything else out of the project until step 4.
+Do nothing in the project while it runs.
 Give it only what is on disk, never the builder's reasoning or this conversation's account of the
 work:
 
@@ -65,14 +75,24 @@ read-only ones are refused), but the fence is advisory; the next two steps are t
 
 1. `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-guard.sh" verify`: the project and the shared `.git`
    files are as they were (agent worktrees, the per-user permissions file, and the linked
-   dependency folders are not watched). A failure voids the run: report what changed, restore it only with
-   the owner's say-so, and start again from step 2.
+   dependency folders are not watched). It releases the red lock, pass or fail. A failure voids
+   the run: report what changed, restore it only with the owner's say-so, salvage the run (below),
+   and start again from step 2.
 2. If the agent's result names a worktree (it does when the agent changed anything there; an
    unchanged worktree and its branch are removed automatically), run
    `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-import.sh" <worktree path> --remove`. It copies back only
    files under the test paths and refuses, copying nothing, if the agent changed anything else
    there, deleted a test, or committed; a refusal voids the run the same way. It also deletes the
    `worktree-agent-*` branch Claude Code made for the agent.
+
+**Salvaging a voided run.** A voided run's tests are not thrown away, and they are not trusted
+either. Copy them out with
+`sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-import.sh" <worktree path> --quarantine "$(mktemp -d)" --remove`,
+which copies only files under the test paths into that folder, outside the project, and records
+nothing. Brief the next run with the quarantine folder's path and the voided run's raw output:
+judge each quarantined test, write the ones that still reproduce into its own worktree, and then
+go past them. A salvage run costs about half a fresh one. Every test the clean run brings back is
+re-proven by steps 4 to 6, as any other.
 
 ## 5. File the raw output
 
