@@ -79,7 +79,10 @@ if [ "$tool" = Bash ]; then
         if (c == "git") {
           j = i + 1
           while (j <= m && w[j] ~ /^-/) { if (w[j] ~ /^-c/ || w[j] ~ /^--config-env/ || w[j] ~ /^--exec-path/) bad("git " w[j]); if (w[j] == "-C" || w[j] == "--git-dir" || w[j] == "--work-tree") j++; j++ }
-          for (k = j + 1; k <= m; k++) if (w[k] ~ /^--output/ || w[k] ~ /^--ext-diff/ || w[k] == "-o") bad("git " w[j] " " w[k])
+          # Options that write a file or run a command: --output, an external
+          # diff, and the pager of git grep (-O, --open-files-in-pager), which runs
+          # whatever it is given.
+          for (k = j + 1; k <= m; k++) if (w[k] ~ /^--output/ || w[k] ~ /^--ext-diff/ || w[k] == "-o" || w[k] ~ /^-O/ || w[k] ~ /^--open-files/ || w[k] ~ /^--textconv/) bad("git " w[j] " " w[k])
           sub_ = w[j]
           # The first word after the subcommand that is not an option.
           for (k = j + 1; k <= m && (w[k] ~ /^-/ || w[k] == ""); k++); nx = (k <= m ? w[k] : "")

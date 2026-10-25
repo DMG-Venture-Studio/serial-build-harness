@@ -134,6 +134,8 @@ sb_red_lock() {
 # repository's top, and its shared .git, so writing it cannot void a red run.
 sb_outside_project() {
   case "$1" in /*) ;; *) return 1 ;; esac
+  # A symlink is judged by where it points, which the caller cannot see here.
+  [ -L "$1" ] && return 1
   case "$1" in *..*) return 1 ;; esac
   _sb_d=$(dirname "$1")
   while [ ! -d "$_sb_d" ]; do _sb_d=$(dirname "$_sb_d"); done
