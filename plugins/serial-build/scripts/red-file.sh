@@ -40,19 +40,22 @@ set -u
 SB_PLUGIN=$(cd "$(dirname "$0")/.." && pwd)
 . "$SB_PLUGIN/scripts/lib.sh"
 refuse() { printf 'red-file: %s\n' "$1" >&2; exit 1; }
-outputs= wts= cost=
+outputs= wts= cost= runkind=
+usage='usage: red-file.sh --output FILE [--output FILE]... [--worktree DIR]... [--cost "<text>"] [--delta | --partial]'
 while [ $# -gt 0 ]; do
   case "$1" in
+    --delta) runkind=" Delta run." ;;
+    --partial) runkind=" Partial run." ;;
     --output) [ -f "${2:-}" ] || refuse "--output needs a file holding the agent's response"; outputs="$outputs$2
 "; shift ;;
     --worktree) [ -d "${2:-}" ] || refuse "--worktree needs the agent's worktree folder"; wts="$wts$2
 "; shift ;;
     --cost) cost=${2:-}; shift ;;
-    *) refuse "usage: red-file.sh --output FILE [--output FILE]... [--worktree DIR]... [--cost \"<text>\"]" ;;
+    *) refuse "$usage" ;;
   esac
   shift
 done
-[ -n "$outputs" ] || refuse "usage: red-file.sh --output FILE [--output FILE]... [--worktree DIR]... [--cost \"<text>\"]"
+[ -n "$outputs" ] || refuse "$usage"
 sb_load_config || refuse "no usable .claude/serial-build.json"
 cd "$SB_ROOT" || exit 1
 plan=docs/plan.md
@@ -79,35 +82,39 @@ void() { # void REASON
 
 # Read the responses first, so a response the script cannot read whole stops
 # everything before anything is checked, moved, or recorded. Rows:
-# F<TAB>slug<TAB>what<TAB>test<TAB>command, A<TAB>attempt, U<TAB>an unread line.
+# F<TAB>slug<TAB>what<TAB>test<TAB>command<TAB>kind, A<TAB>attempt,
+# I<TAB>an item for intake, U<TAB>a line that looks like a finding but is not one.
 all=$(mktemp "${TMPDIR:-/tmp}/sb-file-all.XXXXXX") || exit 1
 while IFS= read -r o; do [ -n "$o" ] && cat "$o" && printf '\n## End\n'; done > "$all" <<EOF
 $outputs
 EOF
 rows=$(LC_ALL=C awk '
   function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-  function flush(   slug, what, test, cmd) {
+  function flush(   slug, what, test, cmd, k) {
     if (cur == "") return
     if (kind == "F") {
       slug = cur; sub(/^([-*]|[0-9]+[.)]) +/, "", slug); sub(/:.*/, "", slug); slug = tolower(slug); gsub(/[_.]/, "-", slug)
-      what = cur; sub(/^([-*]|[0-9]+[.)]) +[Rr][Ee][Dd]-[A-Za-z0-9_.-]*:[ ]*/, "", what); sub(/[ ]*Test:.*/, "", what); sub(/[ .]*$/, "", what)
-      test = "-"; if (match(cur, /Test: `?[^ `]+/)) { test = substr(cur, RSTART + 6, RLENGTH - 6); gsub(/`/, "", test); sub(/[.,;]$/, "", test) }
+      what = cur; sub(/^([-*]|[0-9]+[.)]) +[Rr][Ee][Dd]-[A-Za-z0-9_.-]*:[ ]*/, "", what); sub(/(^|[ .])(Kind|Test|Reproduce|Seen): .*/, "", what); sub(/[ .]*$/, "", what)
+      k = "-"; if (match(cur, /(^|[ .])Kind: /)) { k = substr(cur, RSTART + RLENGTH); sub(/(^|[ .])(Test|Reproduce|Seen): .*/, "", k); gsub(/`/, "", k); sub(/[ .]*$/, "", k) }
+      test = "-"; if (match(cur, /(^|[ .])Test: `?[^ `]+/)) { test = substr(cur, RSTART, RLENGTH); sub(/^.*Test: /, "", test); gsub(/`/, "", test); sub(/[.,;]$/, "", test) }
       cmd = "-"; if (match(cur, /Reproduce: `[^`]*`/)) cmd = substr(cur, RSTART + 12, RLENGTH - 13)
-      printf "F\t%s\t%s\t%s\t%s\n", slug, what, test, cmd
-    } else { a = cur; sub(/^([-*]|[0-9]+[.)]) +/, "", a); printf "A\t%s\n", a }
+      printf "F\t%s\t%s\t%s\t%s\t%s\n", slug, what, test, cmd, k
+    } else { a = cur; sub(/^([-*]|[0-9]+[.)]) +/, "", a); printf "%s\t%s\n", kind, a }
     cur = ""
   }
-  /^#+ / { flush(); sec = tolower($0); next }
+  /^#+ / { flush(); sec = tolower($0); if (sec !~ /attempt|intake/ && $0 ~ /[Rr][Ee][Dd]-[A-Za-z0-9_.-]+:/) printf "U\t%s\n", trim($0); next }
   cur != "" && /^[ \t]+[^ \t]/ { cur = cur " " trim($0); next }
   { flush() }
   sec ~ /finding/ && /^([-*]|[0-9]+[.)]) +[Rr][Ee][Dd]-[A-Za-z0-9_.-]+:/ { kind = "F"; cur = trim($0); next }
   sec ~ /finding/ && /[Rr][Ee][Dd]-[A-Za-z0-9]/ { printf "U\t%s\n", trim($0); next }
   sec ~ /attempt/ && /^([-*]|[0-9]+[.)]) / && !/^- none\.?$/ { kind = "A"; cur = trim($0); next }
+  sec ~ /intake/ && /^([-*]|[0-9]+[.)]) / && !/^- none\.?$/ { kind = "I"; cur = trim($0); next }
+  sec !~ /attempt|intake/ && /Reproduce: `/ { printf "U\t%s\n", trim($0); next }
   END { flush() }' "$all")
 rm -f "$all"
 unread=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "U" { print "  " $2 }')
 if [ -n "$unread" ]; then
-  printf 'red-file: these lines in a Findings section name a red finding but are not in the form "- red-<slug>: <what>. Test: <path>. Reproduce: `<command>`.", so nothing was done (the red lock is still held):\n%s\nAsk the agent to restate its findings in the form agents/red-breaker.md gives, save that response, and run red-file.sh again with it.\n' "$unread" >&2
+  printf 'red-file: these lines look like findings (a heading or line naming red-<slug>, or a Reproduce: command) but are not in the form "- red-<slug>: <what>. Kind: <class>. Test: <path>. Reproduce: `<command>`." directly under "## Findings", so nothing was done (the red lock is still held):\n%s\nAsk the agent to restate its findings in the form agents/red-breaker.md gives, save that response, and run red-file.sh again with it.\n' "$unread" >&2
   exit 1
 fi
 
@@ -138,6 +145,25 @@ EOF
   printf '%s\n' "$im"
 fi
 
+# Tests came back but the report names no finding: a report the script could
+# not read is never filed as a clean run.
+imported=$(printf '%s\n' "${im:-}" | sed -n '/^imported:$/,$p' | sed '1d; /^red-import:/d; /^$/d')
+# A test named only by an item outside Findings (under For intake, or under
+# Attempts) would be left behind, failing and unrecorded.
+stray=$(printf '%s\n' "$imported" | while IFS= read -r t; do
+  [ -n "$t" ] || continue
+  printf '%s\n' "$rows" | awk -F '\t' -v t="$t" '$1 == "F" && ($4 == t || index($4, t "::") == 1) { f = 1 } END { exit !f }' && continue
+  printf '%s\n' "$rows" | awk -F '\t' -v t="$t" '($1 == "I" || $1 == "A") && index($2, t) { f = 1 } END { exit !f }' && printf '  %s\n' "$t"
+done)
+if [ -n "$stray" ]; then
+  printf 'red-file: these imported tests are named by an item under For intake or Attempts, not by a finding, so they would be left failing and unrecorded; nothing was recorded:\n%s\nA failing test is a finding: ask the agent to restate it under "## Findings", or to remove the test. Then run red-file.sh again.\n' "$stray" >&2
+  exit 1
+fi
+if [ -n "$imported" ] && ! printf '%s\n' "$rows" | grep -q '^F'; then
+  printf 'red-file: the agents brought back these test files, but their reports hold no finding in the form "- red-<slug>: ..." under "## Findings", so nothing was recorded:\n%s\nThe tests are in the project, uncommitted. Ask the agent to restate its findings in the form agents/red-breaker.md gives, save that response, and run red-file.sh again with it (verify passes again while only tests changed).\n' "$(printf '%s\n' "$imported" | sed 's/^/  /')" >&2
+  exit 1
+fi
+
 # Every finding with a command must have its test here now; a missing one is a
 # mistake in filing, never a fruitless attempt.
 missing=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "F" && $5 != "-" { print $4 }' | while IFS= read -r t; do
@@ -164,7 +190,7 @@ nontest() { # each changed file outside the test paths, with its checksum
 }
 before=$(nontest)
 printf '%s\n' "$rows" | awk -F '\t' '$1 == "A" { print "- " $2 }' >> "$out.att"
-printf '%s\n' "$rows" | awk -F '\t' '$1 == "F"' | while IFS="$TAB" read -r _ slug what test cmd; do
+printf '%s\n' "$rows" | awk -F '\t' '$1 == "F"' | while IFS="$TAB" read -r _ slug what test cmd kind; do
   base=$slug k=1
   while printf '%s\n' "$taken" | grep -qx "$slug"; do k=$((k + 1)); slug="$base-$k"; done
   taken="$taken
@@ -175,7 +201,11 @@ $slug"
   elif (sh -c "$cmd") > "$out" 2>&1; then
     printf -- '- %s: re-run by red-file.sh, `%s` passed, so it is not a finding (%s)\n' "$what" "$cmd" "$base" >> "$out.att"
   else
-    printf -- '- %s: %s. Test: `%s@%s`. Reproduce: `%s`.\n' "$slug" "$what" "$path" "$(git hash-object "$path")" "$cmd" >> "$out.find"
+    if [ "$kind" != - ] && [ -n "$kind" ]; then
+      printf -- '- %s: %s. Kind: `%s`. Test: `%s@%s`. Reproduce: `%s`.\n' "$slug" "$what" "$kind" "$path" "$(git hash-object "$path")" "$cmd" >> "$out.find"
+    else
+      printf -- '- %s: %s. Test: `%s@%s`. Reproduce: `%s`.\n' "$slug" "$what" "$path" "$(git hash-object "$path")" "$cmd" >> "$out.find"
+    fi
   fi
 done
 after=$(nontest)
@@ -209,7 +239,7 @@ nf=$(grep -c . "$out.find")
 na=$(grep -c . "$out.att")
 {
   if [ -s "$voids" ]; then cat "$voids"; echo; fi
-  printf 'Red run: %s, %s attempts, %s findings. Source: `%s`.' "$today" "$((nf + na))" "$nf" "$src"
+  printf 'Red run: %s, %s attempts, %s findings. Source: `%s`.%s' "$today" "$((nf + na))" "$nf" "$src" "$runkind"
   [ -n "$cost" ] && printf ' Cost: %s.' "$cost"
   printf '\n\n'
   if [ "$nf" -gt 0 ]; then cat "$out.find"; echo; fi
@@ -231,5 +261,26 @@ printf 'red-file: filed the raw output as `%s` and recorded this run in docs/pla
 cat "$plan.sb-add"
 tried=$(LC_ALL=C awk -f "$SB_SCRIPTS/red-record.awk" "$plan" | awk -F '\t' '$1 == "TRIED" { print $2 }')
 [ "$((nf + na))" -lt "${tried:-0}" ] && printf '\nred-file: warning: %s attempts is fewer than the %s on the plan'"'"'s Tried to break list; red-status counts only a run that covers the list (a delta run may be fewer if an earlier run covered it).\n' "$((nf + na))" "$tried"
+kinds=$(sed -n 's/.* Kind: `\([^`]*\)`.*/\1/p' "$out.find" | LC_ALL=C sort | uniq -c | sed 's/^ *\([0-9]*\) /\1 x /')
+if [ -n "$kinds" ]; then
+  printf '\nred-file: the findings fall into these kinds; fix each kind once, with one test that enumerates the class, not one fix per case:\n%s\n' "$(printf '%s\n' "$kinds" | sed 's/^/  /')"
+fi
+intake=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "I" { print "  - " $2 }')
+if [ -n "$intake" ]; then
+  printf '\nred-file: these are for /serial-build:intake, not the plan (message wording, or outside this gate):\n%s\n' "$intake"
+fi
+if [ -n "$runkind" ] && [ "$runkind" = " Delta run." ] && [ "$nf" -gt 0 ]; then
+  # The run before handoff after a partial run is marked a delta run but is not
+  # a fix round, so it does not count toward the stop.
+  # Only this fix chain counts: the delta runs after the last full run.
+  deltas=$(awk '/^Red run:/ {
+      if ($0 ~ / Partial run\./) { n = 0; afterpartial = 1; next }
+      if ($0 !~ / Delta run\./) { n = 0; afterpartial = 0; next }
+      if ($0 !~ / 0 findings\./ && !afterpartial) n++
+      afterpartial = 0 } END { print n + 0 }' "$plan")
+  if [ "$deltas" -ge 2 ]; then
+    printf '\nred-file: STOP. This is the second delta run with findings. Another round would patch the next neighbour; ask the owner whether the gate'"'"'s scope or the fix approach is wrong before any more fixing.\n'
+  fi
+fi
 printf '\nred-file: read each finding against the raw output (it counts only if it fails for the reason the agent gave), then commit the tests, the source, and the plan.\n'
 exit 0

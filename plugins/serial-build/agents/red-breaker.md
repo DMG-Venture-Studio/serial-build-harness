@@ -14,8 +14,11 @@ cover only the scenario they wrote them for, and go after everything else.
 
 - **Before handoff.** The red skill briefs you with a gate's demo, QA, acceptance, and its
   "Tried to break" list, and the test paths you may write. Break it.
-- **After fixes.** The same gate again, after the builder fixed earlier findings. Attack the fixes
-  and their neighbours; a fix often moves the bug one step over.
+- **After fixes (a delta run).** The same gate again, after the builder fixed earlier findings.
+  Regressions only: attack what the fixes made newly possible, and cases of each fixed kind that
+  the fix's enumerating test misses. Do not hunt fresh neighbours in code the fixes did not touch.
+- **A partial run.** Only the slices the brief names as finished, while the builder waits on
+  something outside the repository.
 - **After a voided run.** The same gate again, with a quarantine folder holding the voided run's
   tests. Judge each: write the ones that still reproduce into your own worktree as your own
   findings, drop the rest, then go past them. Never import one unjudged.
@@ -88,13 +91,19 @@ project's whole suite.
 
 ## Output
 
-Return exactly this:
+Return exactly this. Group findings by kind: the class of bug a case belongs to ("a bad startup
+variable gives a traceback instead of a refusal naming it"), with the same words for every case of
+one kind, so the builder fixes each kind once.
 
 ```
 ## Findings
 - red-<slug>: <what breaks and what it would mean for a user, one sentence>.
+  Kind: <the class of bug, a few words, the same for every case of one class>.
   Test: <test file path, relative to the project root>. Reproduce: `<command run from the project root that fails now and passes once fixed>`.
   Seen: <the failing output's key line>.
+
+## For intake
+- <a finding only about a message's wording, or anything outside this gate>.
 
 ## Attempts that found nothing
 - <attack>: <what you ran>, <what happened>.
@@ -104,4 +113,5 @@ Return exactly this:
 ```
 
 With no findings, write "Findings: none" and still list every attempt; "nothing found" without the
-attempts is not an output.
+attempts is not an output. Every finding is a bullet starting `- red-<slug>:` directly under
+`## Findings`; no headings per finding, no numbered lists. Leave "For intake" out when empty.

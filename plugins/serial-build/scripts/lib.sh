@@ -130,6 +130,29 @@ sb_red_lock() {
   printf '%s/serial-build/red-lock-%s\n' "$_sb_c" "$_sb_k"
 }
 
+# sb_outside_project PATH: PATH is absolute and lies outside SB_ROOT, the
+# repository's top, and its shared .git, so writing it cannot void a red run.
+sb_outside_project() {
+  case "$1" in /*) ;; *) return 1 ;; esac
+  # A symlink is judged by where it points, which the caller cannot see here.
+  [ -L "$1" ] && return 1
+  case "$1" in *..*) return 1 ;; esac
+  _sb_d=$(dirname "$1")
+  while [ ! -d "$_sb_d" ]; do _sb_d=$(dirname "$_sb_d"); done
+  _sb_p="$(cd "$_sb_d" && pwd -P)/${1#"$_sb_d"/}"
+  # Some shells keep a leading // from pwd -P; compare with single slashes.
+  _sb_p=$(printf '%s' "$_sb_p" | sed 's#//*#/#g')
+  _sb_q=$(printf '%s' "$1" | sed 's#//*#/#g')
+  for _sb_r in "$SB_ROOT" "$(cd "$SB_ROOT" && pwd -P)" "$(git -C "$SB_ROOT" rev-parse --show-toplevel 2>/dev/null)" \
+      "$(cd "$SB_ROOT" && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)"; do
+    [ -n "$_sb_r" ] || continue
+    _sb_r=$(printf '%s' "$_sb_r" | sed 's#//*#/#g')
+    case "$_sb_q/" in "$_sb_r"/*) return 1 ;; esac
+    case "$_sb_p/" in "$_sb_r"/*) return 1 ;; esac
+  done
+  return 0
+}
+
 # sb_hash: a short checksum of stdin.
 sb_hash() {
   cksum | awk '{print $1 "-" $2}'

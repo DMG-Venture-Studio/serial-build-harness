@@ -79,6 +79,9 @@ Write the draft in this shape:
 
 Acceptance: <what the owner does on the running product, and the sentence they can then say>
 
+Supporting (built here though neither the demo nor the acceptance sentence needs it): <item: the
+reason it stays in this gate> | none
+
 - [ ] <task>
 - [ ] ...
 - [ ] Run the demo end to end on the running product, including its Break it: step, draft the
@@ -110,6 +113,11 @@ Steps 2 to 4 never call AskUserQuestion; the owner reads the plan once, at step 
 proof" item goes to the reviewer in step 4 to measure, and its measured answer is folded in. A
 genuine design question goes to the "New open questions" list.
 
+While building, the builder may be blocked for half an hour or more on something outside the
+repository (CI, a deploy, an account the owner must create). Then a partial red run on the slices
+already finished uses the wait (`/serial-build:red`, "When to run"), instead of finished code
+waiting hours to be attacked.
+
 The demo task sits before the red task on purpose. Running the demo is what finds the bugs that
 stop a demo (a command that does not start, a stale pid file, a refusal that is not an error), and
 fixing them before red means the red lane attacks code that has already survived a real run.
@@ -128,6 +136,15 @@ section, the decision records and open questions it names, the source files the 
 three to five attack questions specific to this gate (what would make it fail its own QA, what
 contradicts a record, what would not build). Tell it it may copy the repository into a scratch
 folder and try the risky parts, and must measure rather than assume.
+
+Ask the reviewer one more question for every item the gate builds: does the demo or the
+acceptance sentence need this item? An item neither needs (supporting tooling: a consistency
+check, a pre-deploy script's error handling, extra startup checks) moves to a later gate, by
+default the one whose demo does need it, through the "New open questions" list or a roadmap note
+in the draft; or it stays, listed under "Supporting" with the reason it cannot wait. The red lane
+attacks the acceptance sentence's surface first and the Supporting items after. In a measured gate
+none of nineteen red findings were against the acceptance sentence: all were in tooling the plan
+had bundled with it, and the red rounds went there.
 
 Fold in every accepted finding. Then review again with the prior findings listed as already
 folded, so the second pass hunts for new ones. Stop after a pass with no major finding (+5), or

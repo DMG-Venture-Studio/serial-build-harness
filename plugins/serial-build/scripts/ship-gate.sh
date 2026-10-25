@@ -248,7 +248,7 @@ voids=$(rows VOID | grep -c .)
 costs=$( { rows COST | awk -F '\t' '{ print "run " $2 ": " $3 }'
   rows VOID | cut -f 2 | sed 's/^Voided red run: */voided: /; s/\.$//'; } | awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }')
 join() { awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }'; }
-guarded=$(rows FIND | awk -F '\t' '!seen[$3]++ { b = $6; sub(/^- red-[a-z0-9-]*: /, "", b); sub(/[. ]*Test: `.*/, "", b); print $3 " (" b ")" }' \
+guarded=$(rows FIND | awk -F '\t' '!seen[$3]++ { b = $6; sub(/^- red-[a-z0-9-]*: /, "", b); sub(/[. ]*Kind: `.*/, "", b); sub(/[. ]*Test: `.*/, "", b); print $3 " (" b ")" }' \
   | while IFS= read -r g; do is_demoted "${g%% *}" || printf '%s\n' "$g"; done | join)
 demoted=$(rows DEMOTE | cut -f 3 | sed 's/^Demoted //' | join)
 

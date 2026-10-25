@@ -18,6 +18,12 @@
 # whatever else the agent changed, and records nothing. The next run is briefed
 # to judge and extend them; only a clean run's tests are ever imported.
 #
+# After copying, each imported test goes through the project's checks.on_edit
+# rules whose paths match it, with SB_FILE set, exactly as an edit would; a rule
+# that formats (ruff format, prettier --write) formats it now, before red-file.sh
+# fingerprints it, instead of later, which would force a judge run and a re-pin.
+# A rule that fails is reported and does not stop the import.
+#
 # Usage: red-import.sh WORKTREE... [--remove] [--quarantine DIR]   (from the project root)
 #   --remove  delete each worktree afterwards (git worktree remove --force), and
 #             its branch when it is one Claude Code made for an agent (worktree-agent-*)
@@ -130,6 +136,39 @@ printf '%s' "$plan" | while IFS="$(printf '\t')" read -r f proj wt; do
   mkdir -p "$SB_ROOT/$(dirname "$f")"
   cp "$proj/$f" "$SB_ROOT/$f"
 done
+# The project's on-edit rules, as an edit of each imported test would run them.
+# A rule that changes anything but the imported tests (an eslint --fix of the
+# whole tree, a regenerate) is refused: nothing would check that change.
+nontest() {
+  sb_changed_files | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    printf '%s' "$plan" | cut -f 1 | grep -qxF -- "$f" && continue
+    printf '%s %s\n' "$f" "$(sb_sum "$f")"
+  done
+}
+before=$(nontest)
+nrules=$(sb_count "$SB_CFG" checks.on_edit)
+fmt=$(mktemp "${TMPDIR:-/tmp}/sb-import.XXXXXX") || exit 1
+printf '%s' "$plan" | cut -f 1 | while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  r=0
+  while [ "$r" -lt "$nrules" ]; do
+    run=$(sb_get "$SB_CFG" "checks.on_edit.$r.run") || { r=$((r + 1)); continue; }
+    name=$(sb_get "$SB_CFG" "checks.on_edit.$r.name") || name=$run
+    if printf '%s\n' "$f" | sb_filter "$SB_CFG" "checks.on_edit.$r.paths" | grep -q .; then
+      if ! (cd "$SB_ROOT" && SB_FILE=$f sh -c "$run") > "$fmt" 2>&1; then
+        printf 'red-import: note: the on-edit rule "%s" fails on %s (the test is imported as the agent wrote it):\n%s\n' "$name" "$f" "$(tail -n 5 "$fmt" | sed 's/^/    /')"
+      fi
+    fi
+    r=$((r + 1))
+  done
+done
+rm -f "$fmt"
+after=$(nontest)
+if [ "$before" != "$after" ]; then
+  printf 'red-import: an on-edit rule run on the imported tests changed other files, which nothing would check; restore them and narrow the rule to the file it is given (SB_FILE):\n%s\n' "$(printf '%s\n%s\n' "$before" "$after" | LC_ALL=C sort | uniq -u | cut -d ' ' -f 1 | LC_ALL=C sort -u | sed 's/^/  /')" >&2
+  exit 1
+fi
 printf 'red-import: copied only test files.\nimported:\n%s' "$(printf '%s' "$plan" | cut -f 1)"
 echo
 remove_all

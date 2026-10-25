@@ -20,6 +20,21 @@ of thousands of tokens deep the orchestration costs as much as the breaker. A fr
 keeps the builder's reasoning away from the brief. If this session already holds the build, say so
 and tell the owner: "next: `/clear`, then `/serial-build:red`".
 
+## When to run
+
+- **Once the builder believes the gate is done**, the usual case.
+- **A partial run, earlier**, when the builder is blocked for 30 minutes or more on something
+  outside the repository (CI, a platform deploy, an account the owner must create) and some of
+  the gate's slices are finished. Finished code otherwise waits hours to be attacked. Brief with
+  `red-brief.sh --partial "<the finished slices, in words>"` and file with `red-file.sh --partial`.
+  The builder stops editing for the run (the red lock enforces it). Its findings go to the
+  red-fixer as in step 9, but no delta run follows them: the next red run is the run before
+  handoff, once the builder has finished, briefed with `--delta` (red-brief.sh sees the partial
+  run and briefs a full attack on everything built since, plus the attacks the partial run listed
+  as not yet built). The partial run and that one together meet the list's minimum; a partial
+  run alone never does. Without an outside wait, a partial
+  run only costs one more run.
+
 ## 1. Preconditions
 
 - `.claude/serial-build.json` has `red.test_paths`, which tells a test from the code under test.
@@ -57,47 +72,39 @@ releases it and voids the run.
 
 ## 3. Brief a fresh agent in its own worktree
 
-Launch the `serial-build:red-breaker` agent with `isolation: "worktree"`, so it works in its own
-checkout of the last commit (Claude Code puts it at `.claude/worktrees/agent-<id>/` inside the
-project) and nothing it does to code reaches the project. Whether the harness runs it in the
-foreground or the background, the red lock keeps everything else out of the project until step 5.
-Do nothing in the project while it runs.
-Give it only what is on disk, never the builder's reasoning or this conversation's account of the
-work:
+Generate the brief; never type it. From the project root:
 
-- the gate slug, its Builds, Demo (with the Break it: step), QA, Proof, and Acceptance, from
-  `docs/plan.md` and `docs/roadmap.md`;
-- the plan's "Tried to break" list: the attacks it must attempt at minimum;
-- the test paths it may write (`red.test_paths`) and the command to run one test file:
-  `red.test_command` from the config, with `{file}` standing for the file (for example
-  `uv run pytest {file} -q -p no:cacheprovider`). Without it, the test commands from CLAUDE.md;
-  never the `checks.on_stop` suite, which costs minutes per run and which the commit hooks run
-  anyway;
-- the context pack: the output of `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-pack.sh" [lane name]`,
-  pasted verbatim. It is generated, never written by hand: the files changed since the plan, the
-  full changed source in the breaker's slice, and the test fixtures it can reuse. It saves the
-  breaker the reading it would otherwise do first and then carry in every later turn; it may
-  still read anything;
-- the instruction that it did not build this and must not trust any claim that it works.
+```
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-brief.sh" --out "<a folder outside the project>" [--lane <name>] [--delta | --partial "<finished slices>"] [--quarantine <folder>]
+```
 
-**Lanes.** When the config has `red.lanes`, launch one breaker per lane, all at once, after the one
-snapshot. Each gets the same brief plus its lane's `focus` and its own pack
-(`red-pack.sh <lane name>`), and is told:
+Use the session's scratch or temp folder for `--out`; the red lock refuses writes inside the
+project. It writes `brief.md` and the context pack `pack.md` there (`brief-<lane>.md` and
+`pack-<lane>.md` for a lane) and prints the one line to brief the agent with: "Read <brief> and
+follow it." The brief is generated from what is on disk, never the builder's reasoning or this
+conversation's account of the work: the instruction that the agent did not build the gate; the
+acceptance sentence, Proof, and roadmap section; the attack order (the surface the demo and the
+acceptance sentence depend on first, the plan's Supporting items after); the "Tried to break"
+minimum; the run's mode; the test paths and the single-file test command (`red.test_command`;
+never the `checks.on_stop` suite, which costs minutes per run); the pack's path; and the report
+form from `agents/red-breaker.md`, which red-file.sh reads mechanically.
 
-- the whole "Tried to break" list is its minimum, and its job is to go past the list in its
-  slice. It may follow a bug anywhere. Do not narrow the brief to the list: in a measured gate,
-  only one of sixteen accepted findings came from running a listed attack as written; seven were
-  neighbours of one and eight were beyond the list;
-- every subprocess and timing attack belongs to the first lane alone, since parallel load makes
-  timing tests flake;
-- to name its test files `red_<lane name>_<what>` so lanes never write the same file (a
-  collision voids the whole run).
+Launch the `serial-build:red-breaker` agent with `isolation: "worktree"` and that one line as its
+prompt, so it works in its own checkout of the last commit (Claude Code puts it at
+`.claude/worktrees/agent-<id>/` inside the project) and nothing it does to code reaches the
+project. Whether the harness runs it in the foreground or the background, the red lock keeps
+everything else out of the project until step 5. Do nothing in the project while it runs.
 
-When all lanes return, file them as one run: `red-file.sh` with one `--output` per lane and one
-`--worktree` per worktree named. It verifies once, imports from every worktree, files all
-outputs as one source, and records one `Red run:` line. A delta run uses one breaker.
+**Lanes.** When the config has `red.lanes`, run `red-brief.sh --lane <name>` for each lane and
+launch one breaker per lane, all at once, after the one snapshot. Each brief tells its agent that
+the whole "Tried to break" list is its minimum and its job is to go past it in its slice (in a
+measured gate only one of sixteen accepted findings came from running a listed attack as written;
+seven were neighbours of one and eight were beyond the list), that subprocess and timing attacks
+are the first lane's alone, and to name its test files `red_<lane>_<what>` (a collision voids the
+run). When all lanes return, file them as one run: `red-file.sh` with one `--output` per lane and
+one `--worktree` per worktree named. A delta run uses one breaker.
 
-A hook fences it while it runs (writes outside the test paths and git commands other than
+A hook fences the breaker while it runs (writes outside the test paths and git commands other than
 read-only ones are refused), but the fence is advisory; the checks in step 5 are the guarantee.
 
 ## 4. While it runs: watch for a stall
@@ -111,8 +118,9 @@ it on your own judgement.
 
 ## 5. File the run, in one call
 
-Save each agent's full response, verbatim, to a file outside the project (the system temp
-folder; the red lock refuses writes inside the project until verify). Then run:
+Save each agent's full response, verbatim, with the Write tool, to a file outside the project
+(the session's scratch or temp folder; the red lock refuses writes inside the project until
+verify, and refuses a shell heredoc anywhere). Then run:
 
 ```
 sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-file.sh" --output <response file> [--worktree <worktree path>] --cost "<duration>, <tokens>"
@@ -122,6 +130,11 @@ sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-file.sh" --output <response file> [--workt
   there; an unchanged worktree and its branch are removed automatically).
 - `--cost` is the duration and token count the harness reported for the agent, so the done entry
   states what the red lane really cost.
+- `--delta` for a delta run, `--partial` for a partial run, so the run line says which.
+
+Besides the drafted section it prints the findings' kinds (fix each once), anything the agent put
+under "For intake" (file those through `/serial-build:intake`, never into the plan), and, on the
+second delta run with findings, a STOP line (see step 9).
 
 It does, in order, and stops at the first that fails:
 
@@ -175,9 +188,9 @@ makes:
 
 Voided red run: <YYYY-MM-DD>, <cost>. Why: <what changed>.
 
-Red run: <YYYY-MM-DD>, <n> attempts, <n> findings. Source: `red-<gate-slug>-<YYYY-MM-DD>`. Cost: <duration>, <tokens>.
+Red run: <YYYY-MM-DD>, <n> attempts, <n> findings. Source: `red-<gate-slug>-<YYYY-MM-DD>`.[ Delta run.| Partial run.] Cost: <duration>, <tokens>.
 
-- red-<slug>: <what breaks, consequence first>. Test: `<test file path>@<git blob hash>`. Reproduce: `<command>`.
+- red-<slug>: <what breaks, consequence first>. Kind: `<class>`. Test: `<test file path>@<git blob hash>`. Reproduce: `<command>`.
 
 Attempts that found nothing:
 - <attack>: <what was run, what happened>
@@ -206,20 +219,33 @@ a committed run cannot be corrected. After committing, run
 `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh"`; its findings are expected to be OPEN until the
 builder fixes them.
 
-## After the fixes: the delta run
+## 9. The fix and delta loop, chained
 
-Once the builder has fixed the findings, run this skill again as a delta run before the handoff
-(a run with no findings needs none).
-A fix often moves the bug one step over, and a fixed finding is otherwise only re-tested, never
-attacked. Steps 2 to 9 are the same; the brief differs:
+A run with findings is not handed back to the owner to `/clear` and type the next step; each of
+those waits measured longer than the breaker runs themselves. This session chains the loop,
+holding only file paths and verdicts, never the code, and every agent it launches starts fresh:
 
-- the fix commits (`git log --oneline <the Red commit>..HEAD`) and the findings they close;
-- "attack the fixes and their neighbours": inputs one step from each fixed case, the same bug
-  through another path, and what the fix itself made newly possible;
-- the plan's "Tried to break" list is not re-run; its minimum was met by the first run, so the
-  delta run's declared attempts may be fewer than the list.
+1. **Fix.** Launch the `serial-build:red-fixer` agent in the project (no worktree), with the one
+   line "Fix the red findings in docs/plan.md's Red section, following your instructions." It is
+   a fresh builder, never the breaker. It fixes each kind once, in the one place the class should
+   be handled, with one table-driven test that enumerates the class (for configuration errors:
+   every variable times unset, blank, malformed, and wrong-but-plausible, times every entry
+   point), not one patch and one test per reported case. Point fixes are what kept a measured
+   gate looping for three rounds; the class fix took fourteen minutes and closed five findings.
+2. **Read its report.** "Looks wrong" items go to the owner (below). "Tests that must change" go to
+   a re-pin judgement (below). Then run `red-status.sh`: every finding it reports fixed must read
+   RESOLVED.
+3. **Delta run.** Back to step 2, briefed with `red-brief.sh --delta` and filed with
+   `red-file.sh --delta`. It is regressions only: what the fixes made newly possible, and cases
+   of each fixed kind that the enumerating tests miss, never fresh neighbours in untouched code.
+   Its declared attempts may be fewer than the "Tried to break" list, whose minimum the first run
+   met.
+4. **Repeat** from 1 while the delta run finds something, with one limit: when red-file.sh prints
+   STOP (the second delta run with findings), do not fix again. Ask the owner whether the gate's
+   scope or the fix approach is wrong; a third round patches the next neighbour.
 
-It records its own `Red run:` block, as any later run does.
+Stop and ask the owner only for: a finding that may be wrong (the demote question), the STOP
+above, or a clean run, when the loop ends and step 10 names the next command.
 
 ## When a finding is wrong, or its test must change
 
@@ -240,14 +266,12 @@ It records its own `Red run:` block, as any later run does.
   The script refuses, re-pinning none, unless each changed test still fails on the commit that
   recorded its finding, from before the fix, and commits all the re-pins together.
 
-## 9. Report
+## 10. Report
 
-Consequence first, to the owner: how many attacks, what broke and what that would have meant for
-a user, and the next step, which is the builder fixing each finding (a fix is ordinary product
-code; the red lane never writes it). Quote the last line of `red-status.sh`: the gate cannot
-hand off until it says clear.
+Consequence first, to the owner: how many runs and attacks, what broke and what it would have
+meant for a user, each kind and how it was fixed, and what the loop cost. Quote the last line of
+`red-status.sh`: the gate cannot hand off until it says clear.
 
-End with the next command, to run after `/clear` or in a new session: with findings, "next:
-`/clear`, then fix the red findings in `docs/plan.md`, then `/clear` and `/serial-build:red` for
-the delta run"; after a delta run with none open, "next: `/clear`, then
-`/serial-build:demo-brief`".
+End with the next command, to run after `/clear` or in a new session: when the loop ended clean,
+"next: `/clear`, then `/serial-build:demo-brief`"; when it stopped for the owner, what it needs
+from them.
