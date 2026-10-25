@@ -84,11 +84,15 @@ while IFS="$TAB" read -r kind r n d src has att found runline; do
   [ "$kind" = RUN ] || continue
   [ "$n" = - ] && n=0
   [ "$src" = - ] && src=
-  [ "$n" -gt "$most" ] && most=$n
-  # A partial run (finished slices only, while the builder waited) and the run
-  # after it cover the list together.
-  [ $((prev + n)) -gt "$most" ] && [ "$prev" -gt 0 ] && most=$((prev + n))
-  case "$runline" in *" Partial run."*) prev=$n ;; *) prev=0 ;; esac
+  # A partial run (finished slices only, while the builder waited) never meets
+  # the list alone, since it lists what was not yet built as attempts; it and the
+  # run after it cover the list together.
+  case "$runline" in
+    *" Partial run."*) prev=$n ;;
+    *) [ "$n" -gt "$most" ] && most=$n
+       [ "$prev" -gt 0 ] && [ $((prev + n)) -gt "$most" ] && most=$((prev + n))
+       prev=0 ;;
+  esac
   [ "$n" -ge 1 ] || problems="${problems}run $r declares no attempts; a red run with nothing tried is not a red run
 "
   [ "$has" = 1 ] || problems="${problems}run $r has no \"Attempts that found nothing:\" list

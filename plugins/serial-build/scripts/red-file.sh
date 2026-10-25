@@ -259,7 +259,9 @@ if [ -n "$intake" ]; then
   printf '\nred-file: these are for /serial-build:intake, not the plan (message wording, or outside this gate):\n%s\n' "$intake"
 fi
 if [ -n "$runkind" ] && [ "$runkind" = " Delta run." ] && [ "$nf" -gt 0 ]; then
-  deltas=$(awk '/^Red run:.* Delta run\./ && !/ 0 findings\./' "$plan" | grep -c .)
+  # The run before handoff after a partial run is marked a delta run but is not
+  # a fix round, so it does not count toward the stop.
+  deltas=$(awk '/^Red run:/ { if ($0 ~ / Delta run\./ && $0 !~ / 0 findings\./ && !afterpartial) n++; afterpartial = ($0 ~ / Partial run\./) } END { print n + 0 }' "$plan")
   if [ "$deltas" -ge 2 ]; then
     printf '\nred-file: STOP. This is the second delta run with findings. Another round would patch the next neighbour; ask the owner whether the gate'"'"'s scope or the fix approach is wrong before any more fixing.\n'
   fi

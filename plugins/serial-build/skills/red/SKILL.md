@@ -27,10 +27,12 @@ and tell the owner: "next: `/clear`, then `/serial-build:red`".
   outside the repository (CI, a platform deploy, an account the owner must create) and some of
   the gate's slices are finished. Finished code otherwise waits hours to be attacked. Brief with
   `red-brief.sh --partial "<the finished slices, in words>"` and file with `red-file.sh --partial`.
-  The builder stops editing for the run (the red lock enforces it), and fixes its findings as
-  usual. The run before handoff is then a delta run (`--delta`) over everything changed since,
-  which also takes the "Tried to break" attacks the partial run listed as not yet built; the
-  partial run and that one together meet the list's minimum. Without an outside wait, a partial
+  The builder stops editing for the run (the red lock enforces it). Its findings go to the
+  red-fixer as in step 9, but no delta run follows them: the next red run is the run before
+  handoff, once the builder has finished, briefed with `--delta` (red-brief.sh sees the partial
+  run and briefs a full attack on everything built since, plus the attacks the partial run listed
+  as not yet built). The partial run and that one together meet the list's minimum; a partial
+  run alone never does. Without an outside wait, a partial
   run only costs one more run.
 
 ## 1. Preconditions
@@ -116,8 +118,9 @@ it on your own judgement.
 
 ## 5. File the run, in one call
 
-Save each agent's full response, verbatim, to a file outside the project (the system temp
-folder; the red lock refuses writes inside the project until verify). Then run:
+Save each agent's full response, verbatim, with the Write tool, to a file outside the project
+(the session's scratch or temp folder; the red lock refuses writes inside the project until
+verify, and refuses a shell heredoc anywhere). Then run:
 
 ```
 sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-file.sh" --output <response file> [--worktree <worktree path>] --cost "<duration>, <tokens>"

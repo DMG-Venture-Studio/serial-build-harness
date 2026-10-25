@@ -36,7 +36,7 @@ if [ "$tool" = Bash ]; then
   cmd=$(sb_get "$input" tool_input.command) || exit 0
   # The red lane's own scripts, invoked plainly with simple arguments.
   # The script path is one word: quoted whole, or with no space in it.
-  if printf '%s\n' "$cmd" | grep -Eq '^[[:space:]]*(sh[[:space:]]+)?("[^"$`;&|<>()]*/scripts/red-(guard|file|pack|brief)\.sh"|[^[:space:]"$`;&|<>()'"'"']*/scripts/red-(guard|file|pack|brief)\.sh)([[:space:]]+("[^"$`]*"|[^[:space:];&|<>`()$"'"'"']+))*[[:space:]]*$'; then
+  if printf '%s\n' "$cmd" | grep -Eq '^[[:space:]]*(sh[[:space:]]+)?("[^"$`;&|<>()]*/scripts/red-(guard|file|pack|brief)\.sh"|[^[:space:]"$`;&|<>()'"'"']*/scripts/red-(guard|file|pack|brief)\.sh|"?\$\{?CLAUDE_PLUGIN_ROOT\}?/scripts/red-(guard|file|pack|brief)\.sh"?)([[:space:]]+("[^"$`]*"|[^[:space:];&|<>`()$"'"'"']+))*[[:space:]]*$'; then
     exit 0
   fi
   # Folders a write must stay out of: the project (as given and resolved), the

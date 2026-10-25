@@ -71,8 +71,9 @@ fi
 top() { awk '/^## / { exit } { print }' "$plan"; }  # the plan's top block
 tried=$(top | awk '/^Tried to break/ { on = 1; next } on && /^- / { print; next } on && NF { exit }')
 acceptance=$(top | sed -n 's/^Acceptance: //p' | head -n 1)
-supporting=$(top | awk '/^Supporting/ { on = 1; print; next } on && /^- / { print; next } on && NF { exit }')
-printf '%s\n' "$supporting" | head -n 1 | grep -Eq '(:|\|)[[:space:]]*none\.?[[:space:]]*$' && [ "$(printf '%s\n' "$supporting" | grep -c .)" -le 1 ] && supporting=
+# The Supporting block: its line and the bullets directly under it, up to the
+# first blank line (the task list follows it), or nothing when it says none.
+supporting=$(top | awk '/^Supporting/ { on = 1; if ($0 ~ /(:|\|)[[:space:]]*none\.?[[:space:]]*$/) exit; print; next } on && /^- / && !/^- \[/ { print; next } on { exit }')
 proof=$(top | awk '/^Proof/ { on = 1; next } on && /^(    |\t)/ { print; next } on && NF { exit }')
 section=$( [ -f docs/roadmap.md ] && awk -v h="### $gate" '$0 == h { on = 1; next } on && (/^(#|##|###) / || /^Later:/) { exit } on' docs/roadmap.md)
 paths=$(k=0; m=$(sb_count "$SB_CFG" red.test_paths); while [ "$k" -lt "$m" ]; do printf '`%s` ' "$(sb_get "$SB_CFG" "red.test_paths.$k")"; k=$((k + 1)); done)
@@ -114,23 +115,31 @@ form=$(awk '/^## Output/ { on = 1; next } on && /^```/ { fence = !fence } on && 
       printf '%s\n\n' "${tried:-- (the plan lists none)}" ;;
     delta)
       redc=$(git log -1 --format=%H --grep='^Red: ' -- "$plan" 2>/dev/null)
-      echo "## A delta run: regressions only"
+      lastrun=$(LC_ALL=C awk -f "$SB_SCRIPTS/red-record.awk" "$plan" | awk -F '\t' '$1 == "RUN" { n = $2 } END { print n + 0 }')
+      if awk '/^Red run:/ { last = $0 } END { exit !(last ~ / Partial run\./) }' "$plan"; then
+        echo "## The run before handoff, after a partial run"
+        echo
+        echo "The last run was a partial run, on the slices finished then. Everything built or changed since is yours to attack in full, as a first run would: neighbours, boundaries, order and repetition, the environment. Also attack what the fixes of the partial run's findings made newly possible. Attempt every attack on this list that the partial run marked not yet built, and go past it."
+        echo
+        printf '%s\n\n' "${tried:-- (the plan lists none)}"
+      else
+        echo "## A delta run: regressions only"
+        echo
+        echo "The builder fixed the findings below. Attack what the fixes made newly possible, and cases of each fixed kind that the fix's enumerating test misses. Do not hunt fresh neighbours in code the fixes did not touch."
+        echo
+      fi
+      echo "A finding that is only about a message's wording goes under \"## For intake\", not under Findings."
       echo
-      echo "The builder fixed the findings below. Attack what the fixes made newly possible, and cases of each fixed kind that the fix's enumerating test misses. Do not hunt fresh neighbours in code the fixes did not touch. A finding that is only about a message's wording goes under \"## For intake\", not under Findings."
-      echo
-      if [ -n "$redc" ]; then
-        printf 'The fix commits since the last Red commit (%s):\n\n' "$(git rev-parse --short "$redc")"
+      if [ -n "$redc" ] && [ -n "$(git log --format=%h "$redc..HEAD" -- . | head -n 1)" ]; then
+        printf 'The commits since the last Red commit (%s):\n\n' "$(git rev-parse --short "$redc")"
         git log --format='- %h %s' "$redc..HEAD" -- . | head -n 40
         echo
       fi
-      echo "The findings they close:"
-      echo
-      LC_ALL=C awk -f "$SB_SCRIPTS/red-record.awk" "$plan" | awk -F '\t' '$1 == "FIND" { print $6 }'
-      echo
-      if awk '/^Red run:/ { last = $0 } END { exit !(last ~ / Partial run\./) }' "$plan"; then
-        echo "The last run was a partial run, on the slices finished then. Everything built since is new code: attack it in full, including every attack on this list that the partial run marked not yet built."
+      found=$(LC_ALL=C awk -f "$SB_SCRIPTS/red-record.awk" "$plan" | awk -F '\t' -v r="$lastrun" '$1 == "FIND" && $2 == r { print $6 }')
+      if [ -n "$found" ]; then
+        echo "The last run's findings, which those commits fix:"
         echo
-        printf '%s\n\n' "${tried:-- (the plan lists none)}"
+        printf '%s\n\n' "$found"
       fi ;;
   esac
   if [ -n "$lanekey" ]; then

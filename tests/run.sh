@@ -328,7 +328,7 @@ for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'c
   hook "$proj" red-lock.sh "$(main_bash "$c")"
   expect "the lock refuses for the builder: $c" 2 "is refused while it is held"
 done
-for c in 'sh /x/scripts/red-file.sh --output /tmp/o.md --cost \"26 min, 1.4M tokens\"' 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'sh \"/x y/scripts/red-pack.sh\" core' 'FOO=1 pwd' "git log --oneline > $WORK/notes/log.txt" "cat a | tail -n 3 > $WORK/t.txt 2>&1" "git diff | tee $WORK/d.txt | head" 'gh run list' 'gh pr view 3 --comments' 'gh issue list -R o/r' "git -C $proj remote get-url origin" "git -C $proj log -1" 'git branch -a' 'sort -u a | uniq -c' 'date +%s' 'sh /x/scripts/red-brief.sh --out /tmp/rb --lane core'; do
+for c in 'sh /x/scripts/red-file.sh --output /tmp/o.md --cost \"26 min, 1.4M tokens\"' 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'sh \"/x y/scripts/red-pack.sh\" core' 'FOO=1 pwd' "git log --oneline > $WORK/notes/log.txt" "cat a | tail -n 3 > $WORK/t.txt 2>&1" "git diff | tee $WORK/d.txt | head" 'gh run list' 'gh pr view 3 --comments' 'gh issue list -R o/r' "git -C $proj remote get-url origin" "git -C $proj log -1" 'git branch -a' 'sort -u a | uniq -c' 'date +%s' 'sh /x/scripts/red-brief.sh --out /tmp/rb --lane core' 'sh \"\${CLAUDE_PLUGIN_ROOT}/scripts/red-file.sh\" --output /tmp/o.md'; do
   hook "$proj" red-lock.sh "$(main_bash "$c")"; silent "the lock allows for the builder: $c"
 done
 hook "$proj" session-start.sh '{"session_id":"s4","source":"startup"}'
@@ -688,13 +688,19 @@ expect "red-pack refuses to write inside the project" 1 "outside the project"
 script "$rf" red-pack.sh --out "$WORK/packs/p.md"
 expect "red-pack writes the pack to a file outside the project" 0 "wrote the context pack"
 check "the pack file holds the pack" 'grep -q "^# Context pack: rf-gate" "$WORK/packs/p.md"'
-awk '{ print } /^Acceptance:/ { print ""; print "Supporting (built here though neither the demo nor the acceptance sentence needs it):"; print "- the consistency check: the next gate deploys with it" }' "$rf/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$rf/docs/plan.md"
+awk '{ print } /^Acceptance:/ { print ""; print "Supporting (built here though neither the demo nor the acceptance sentence needs it):"; print "- the consistency check: the next gate deploys with it"; print ""; print "- [ ] Parse the input."; print "- [ ] Run /serial-build:red on this gate." }' "$rf/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$rf/docs/plan.md"
 commit "$rf" "Plan: name the supporting item"
 script "$rf" red-brief.sh --out "$rf/brief"
 expect "red-brief refuses to write inside the project" 1 "outside the project"
 script "$rf" red-brief.sh --out "$WORK/rb"
 expect "red-brief writes the brief and the pack, and prints the one line to brief with" 0 "Read $WORK/rb/brief.md and follow it"
 check "the brief holds the gate, the attack order with the supporting item second, the pack's path, and the report form" 'grep -q "^Acceptance: Ada can say it refuses an empty statement." "$WORK/rb/brief.md" && grep -q "^1. The acceptance sentence" "$WORK/rb/brief.md" && grep -q "^- the consistency check" "$WORK/rb/brief.md" && grep -q "Read $WORK/rb/pack.md first" "$WORK/rb/brief.md" && grep -q "^## Findings" "$WORK/rb/brief.md" && grep -q "Kind: <the class of bug" "$WORK/rb/brief.md" && [ -f "$WORK/rb/pack.md" ]' "$(cat "$WORK/rb/brief.md")"
+check "the Supporting block stops at the blank line before the tasks (review)" '! grep -q "Parse the input" "$WORK/rb/brief.md"'
+sed 's/^Supporting (built here though neither the demo nor the acceptance sentence needs it):$/Supporting (built here though neither the demo nor the acceptance sentence needs it): none/; /^- the consistency check/d' "$rf/docs/plan.md" > "$WORK/p2"
+cp "$rf/docs/plan.md" "$WORK/p1" && cp "$WORK/p2" "$rf/docs/plan.md"
+script "$rf" red-brief.sh --out "$WORK/rb2"
+check "Supporting: none adds no second attack step (review)" '! grep -q "^2. Then the supporting items" "$WORK/rb2/brief.md" && ! grep -q "Parse the input" "$WORK/rb2/brief.md"'
+cp "$WORK/p1" "$rf/docs/plan.md"
 script "$rf" red-brief.sh --out "$WORK/rb" --delta
 check "a delta brief is regressions only and lists the findings to re-attack (issue 13)" 'grep -q "A delta run: regressions only" "$WORK/rb/brief.md" && grep -q "red-empty-statement" "$WORK/rb/brief.md" && ! grep -q "^## Your minimum" "$WORK/rb/brief.md"'
 script "$rf" red-brief.sh --out "$WORK/rb" --partial "the parser"
@@ -733,6 +739,20 @@ script "$rf" red-file.sh --output "$WORK/k2.md" --worktree "$wk" --delta
 expect "the second delta run with findings says to stop and ask about scope (issue 13)" 0 "STOP. This is the second delta run with findings"
 git -C "$rf" reset -q --hard "$rfbase" && git -C "$rf" clean -qfd -- tests docs; script "$rf" red-guard.sh abort
 
+echo "-- the run before handoff after a partial run does not count toward the stop (review)"
+{ awk '/^## Red$/ { exit } { print }' "$rf/docs/plan.md"
+  printf '## Red\n\nRed run: 2026-10-25, 2 attempts, 0 findings. Source: `red-rf-gate-%s`. Partial run.\n\nAttempts that found nothing:\n- a: refused.\n- b: not yet built.\n' "$today"; } > "$WORK/pp" && cp "$WORK/pp" "$rf/docs/plan.md"
+commit "$rf" "Red: rf-gate, partial"
+for n in 1 2; do
+  script "$rf" red-guard.sh snapshot
+  git -C "$rf" worktree add -q --detach "$wk" HEAD && printf 'grep -q never_%s src/tally/core.py\n' "$n" > "$wk/tests/red_p$n.sh"
+  printf '## Findings\n- red-p%s: it breaks.\n  Kind: k.\n  Test: tests/red_p%s.sh. Reproduce: `sh tests/red_p%s.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' "$n" "$n" "$n" > "$WORK/p$n.md"
+  script "$rf" red-file.sh --output "$WORK/p$n.md" --worktree "$wk" --delta
+  commit "$rf" "Red: rf-gate, run $n after the partial"
+done
+case "$out" in *STOP*) no "two runs with findings after a partial run are one fix round, not two" "$out" ;; *) ok "two runs with findings after a partial run are one fix round, not two" ;; esac
+git -C "$rf" reset -q --hard "$rfbase" && git -C "$rf" clean -qfd -- tests docs; script "$rf" red-guard.sh abort
+
 echo "-- a partial run and the run after it meet the list together (issue 14)"
 cp "$rf/docs/plan.md" "$WORK/plan.keep"
 { awk '/^## Red$/ { exit } { print }' "$WORK/plan.keep"
@@ -742,6 +762,18 @@ expect "a partial run plus the next run cover the two attempts" 0 "well formed"
 sed 's/ Partial run\.//' "$rf/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$rf/docs/plan.md"
 script "$rf" red-status.sh --record
 expect "two ordinary runs of one attempt each do not" 1 "declares at least the 2 attempts"
+{ awk '/^## Red$/ { exit } { print }' "$WORK/plan.keep"
+  printf '## Red\n\nRed run: 2026-10-25, 3 attempts, 0 findings. Source: `red-rf-gate-%s`. Partial run.\n\nAttempts that found nothing:\n- an empty statement: refused.\n- a broken neighbour: not yet built.\n- a third: not yet built.\n' "$today"; } > "$rf/docs/plan.md"
+script "$rf" red-status.sh --record
+expect "a partial run alone never meets the list, whatever it declares (review)" 1 "declares at least the 2 attempts"
+printf '\nRed run: 2026-10-25, 1 attempts, 1 findings. Source: `red-rf-gate-%s`. Delta run.\n\n- red-p1: x. Test: `tests/a.sh@0`. Reproduce: `true`.\n\nAttempts that found nothing:\n- none\n' "$today" >> "$rf/docs/plan.md"
+script "$rf" red-brief.sh --out "$WORK/rb" --delta
+check "the brief after a delta run that followed a partial run is a regressions-only brief listing only the last run's findings (review)" 'grep -q "A delta run: regressions only" "$WORK/rb/brief.md" && grep -q "red-p1" "$WORK/rb/brief.md"' "$(cat "$WORK/rb/brief.md")"
+cp "$WORK/plan.keep" "$rf/docs/plan.md"
+{ awk '/^## Red$/ { exit } { print }' "$WORK/plan.keep"
+  printf '## Red\n\nRed run: 2026-10-25, 1 attempts, 0 findings. Source: `red-rf-gate-%s`. Partial run.\n\nAttempts that found nothing:\n- an empty statement: refused.\n' "$today"; } > "$rf/docs/plan.md"
+script "$rf" red-brief.sh --out "$WORK/rb" --delta
+check "after a partial run the delta brief attacks everything built since, with the list (review)" 'grep -q "The run before handoff, after a partial run" "$WORK/rb/brief.md" && ! grep -q "regressions only" "$WORK/rb/brief.md" && grep -q "^- a broken neighbour" "$WORK/rb/brief.md"'
 cp "$WORK/plan.keep" "$rf/docs/plan.md"
 
 echo "-- a voided run is recorded with the next filing, and the done entry states the cost (issue 2)"
