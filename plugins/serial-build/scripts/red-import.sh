@@ -137,6 +137,16 @@ printf '%s' "$plan" | while IFS="$(printf '\t')" read -r f proj wt; do
   cp "$proj/$f" "$SB_ROOT/$f"
 done
 # The project's on-edit rules, as an edit of each imported test would run them.
+# A rule that changes anything but the imported tests (an eslint --fix of the
+# whole tree, a regenerate) is refused: nothing would check that change.
+nontest() {
+  sb_changed_files | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    printf '%s' "$plan" | cut -f 1 | grep -qxF -- "$f" && continue
+    printf '%s %s\n' "$f" "$(sb_sum "$f")"
+  done
+}
+before=$(nontest)
 nrules=$(sb_count "$SB_CFG" checks.on_edit)
 fmt=$(mktemp "${TMPDIR:-/tmp}/sb-import.XXXXXX") || exit 1
 printf '%s' "$plan" | cut -f 1 | while IFS= read -r f; do
@@ -154,6 +164,11 @@ printf '%s' "$plan" | cut -f 1 | while IFS= read -r f; do
   done
 done
 rm -f "$fmt"
+after=$(nontest)
+if [ "$before" != "$after" ]; then
+  printf 'red-import: an on-edit rule run on the imported tests changed other files, which nothing would check; restore them and narrow the rule to the file it is given (SB_FILE):\n%s\n' "$(printf '%s\n%s\n' "$before" "$after" | LC_ALL=C sort | uniq -u | cut -d ' ' -f 1 | LC_ALL=C sort -u | sed 's/^/  /')" >&2
+  exit 1
+fi
 printf 'red-import: copied only test files.\nimported:\n%s' "$(printf '%s' "$plan" | cut -f 1)"
 echo
 remove_all

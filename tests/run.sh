@@ -324,11 +324,11 @@ expect "nor into an agent worktree" 2 "red lock is held"
 hook "$proj" red-lock.sh "$(write_input "$WORK/elsewhere/notes.md")"; silent "a write outside the project passes"
 hook "$proj" red-lock.sh "$(red_input Write "\"file_path\":\"$proj/.claude/worktrees/agent-x/tests/t.py\"")"; silent "the red-breaker agent is not locked out"
 hook "$proj" red-lock.sh "$(red_bash "uv run pytest tests/t.py")"; silent "the red-breaker agent may run its tests"
-for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'cat a | tee b' 'find . -name x -delete' 'git checkout -- .' 'sh tests/check.sh' 'make dev' 'git stash' 'ls $(rm -rf src)' 'sh /p/scripts/red-guard.sh verify; rm -rf src' 'rm -rf src /x/scripts/red-guard.sh' 'touch evil /x/scripts/red-file.sh' 'sort -o f a' 'uniq a out' 'date -s 12:00' 'git diff --output=x' 'git log --output=x' 'git -c core.fsmonitor=evil status' "git log > $proj/out.txt" 'git log > out.txt' "ls > $proj/.git/hooks/post-commit" "cat a | tee $proj/src/x" 'gh pr merge 3' 'gh api repos/x' "git -C $proj push" 'sort -o f a' 'rg --pre cat x' 'git log > /tmp/../$proj/x'; do
+for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'cat a | tee b' 'find . -name x -delete' 'git checkout -- .' 'sh tests/check.sh' 'make dev' 'git stash' 'ls $(rm -rf src)' 'sh /p/scripts/red-guard.sh verify; rm -rf src' 'rm -rf src /x/scripts/red-guard.sh' 'touch evil /x/scripts/red-file.sh' 'sort -o f a' 'uniq a out' 'date -s 12:00' 'git diff --output=x' 'git log --output=x' 'git -c core.fsmonitor=evil status' "git log > $proj/out.txt" 'git log > out.txt' "ls > $proj/.git/hooks/post-commit" "cat a | tee $proj/src/x" 'gh pr merge 3' 'gh api repos/x' "git -C $proj push" 'sort -o f a' 'rg --pre cat x' 'git log > /tmp/../$proj/x' 'sh /tmp/x/scripts/red-guard.sh verify' 'FOO=1 pwd' 'GIT_CONFIG_GLOBAL=/tmp/cfg git status' 'sort -S 64K --compress-program=sh /tmp/big.txt' 'sort --out=src/x a' 'sort -T src a' 'echo x | uniq - src/x' 'git remote -v add evil u' 'git remote -v update' "echo x > /proc/self/cwd/src/x" "echo x > $(dirname "$proj")/./$(basename "$proj")/src/x" "echo x > /$(dirname "$proj")/$(basename "$proj")/src/x" "echo x > $(dirname "$proj")/tall[y]/src/x" 'echo x >&9evil' "echo x > $HOME/.gitconfig" "cat a | tee /proc/self/cwd/src/x"; do
   hook "$proj" red-lock.sh "$(main_bash "$c")"
   expect "the lock refuses for the builder: $c" 2 "is refused while it is held"
 done
-for c in 'sh /x/scripts/red-file.sh --output /tmp/o.md --cost \"26 min, 1.4M tokens\"' 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'sh \"/x y/scripts/red-pack.sh\" core' 'FOO=1 pwd' "git log --oneline > $WORK/notes/log.txt" "cat a | tail -n 3 > $WORK/t.txt 2>&1" "git diff | tee $WORK/d.txt | head" 'gh run list' 'gh pr view 3 --comments' 'gh issue list -R o/r' "git -C $proj remote get-url origin" "git -C $proj log -1" 'git branch -a' 'sort -u a | uniq -c' 'date +%s' 'sh /x/scripts/red-brief.sh --out /tmp/rb --lane core' 'sh \"\${CLAUDE_PLUGIN_ROOT}/scripts/red-file.sh\" --output /tmp/o.md'; do
+for c in "sh $S/red-file.sh --output /tmp/o.md --cost \\\"26 min, 1.4M tokens\\\"" 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' "sh $S/red-guard.sh verify" "sh $S/red-guard.sh abort" "sh $S/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1" "sh \\\"$S/red-pack.sh\\\" core" "git log --oneline > $WORK/notes/log.txt" "cat a | tail -n 3 > $WORK/t.txt 2>&1" "git diff | tee $WORK/d.txt | head" 'gh run list' 'gh pr view 3 --comments' 'gh issue list -R o/r' "git -C $proj remote get-url origin" "git -C $proj log -1" 'git branch -a' 'sort -u a | uniq -c' 'date +%s' "sh $S/red-brief.sh --out /tmp/rb --lane core" 'sh \"\${CLAUDE_PLUGIN_ROOT}/scripts/red-file.sh\" --output /tmp/o.md'; do
   hook "$proj" red-lock.sh "$(main_bash "$c")"; silent "the lock allows for the builder: $c"
 done
 hook "$proj" session-start.sh '{"session_id":"s4","source":"startup"}'
@@ -683,6 +683,7 @@ rf_reset
 
 echo "-- red-pack --out and red-brief: the brief is a generated file, not retyped (issue 16)"
 rfbase=$(git -C "$rf" rev-parse HEAD)
+rf_back() { git -C "$rf" reset -q --hard "$rfbase" && git -C "$rf" clean -qfd -- tests docs; for w in "$rf"/.claude/worktrees/*; do [ -e "$w/.git" ] && git -C "$rf" worktree remove --force "$w"; done; script "$rf" red-guard.sh abort; }
 script "$rf" red-pack.sh --out "$rf/pack.md"
 expect "red-pack refuses to write inside the project" 1 "outside the project"
 script "$rf" red-pack.sh --out "$WORK/packs/p.md"
@@ -717,7 +718,27 @@ printf 'Six things broke, see below.\n\n1) the total\n2) the header\n\n## Attemp
 script "$rf" red-file.sh --output "$WORK/prose.md" --worktree "$wz"
 expect "tests came back but the report names no finding: nothing is recorded" 1 "brought back these test files"
 check "and no clean run was filed" '! grep -q "Red run: .*, 1 attempts, 0 findings" "$rf/docs/plan.md"'
-git -C "$rf" reset -q --hard "$rfbase" && git -C "$rf" clean -qfd -- tests docs; script "$rf" red-guard.sh abort
+rf_back
+
+echo "-- red-file reads titles and words loosely enough, and keeps every failing test (review)"
+script "$rf" red-guard.sh snapshot
+git -C "$rf" worktree add -q --detach "$wz" HEAD && printf 'grep -q never src/tally/core.py\n' > "$wz/tests/red_h.sh" && printf 'grep -q never2 src/tally/core.py\n' > "$wz/tests/red_j.sh"
+printf '# Red-breaker report\n\n## Findings\n- red-h: the Contest: field drops the total.\n  Kind: k.\n  Test: tests/red_h.sh. Reproduce: `sh tests/red_h.sh`.\n\n## For intake\n- red-j: also broken. Test: tests/red_j.sh. Reproduce: `sh tests/red_j.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/h.md"
+script "$rf" red-file.sh --output "$WORK/h.md" --worktree "$wz"
+expect "a test named only under For intake is refused, not left failing and unrecorded" 1 "named by an item under For intake or Attempts"
+printf '# Red-breaker report\n\n## Findings\n- red-h: the Contest: field drops the total.\n  Kind: k.\n  Test: tests/red_h.sh. Reproduce: `sh tests/red_h.sh`.\n- red-j: also broken.\n  Kind: k.\n  Test: tests/red_j.sh. Reproduce: `sh tests/red_j.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/h2.md"
+script "$rf" red-file.sh --output "$WORK/h2.md"
+expect "a report titled Red-breaker is read, once restated" 0 "2 findings"
+check "a word ending in a field name does not cut the finding" 'grep -q "^- red-h: the Contest: field drops the total. Kind: \`k\`." "$rf/docs/plan.md"' "$(grep red-h "$rf/docs/plan.md")"
+rf_back
+printf '{"version":1,"owner":{"name":"Ada"},"checks":{"on_edit":[{"name":"fix all","paths":["tests/red_*"],"run":"echo fixed >> src/tally/core.py"}]},"red":{"test_paths":["tests/**"]}}\n' > "$rf/.claude/serial-build.json"
+commit "$rf" "a rule that writes outside the file"
+script "$rf" red-guard.sh snapshot
+git -C "$rf" worktree add -q --detach "$wz" HEAD && printf 'grep -q never src/tally/core.py\n' > "$wz/tests/red_f.sh"
+printf '## Findings\n- red-f: it breaks.\n  Test: tests/red_f.sh. Reproduce: `sh tests/red_f.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/f.md"
+script "$rf" red-file.sh --output "$WORK/f.md" --worktree "$wz"
+expect "an on-edit rule that changes product code during import voids the run (review)" 1 "an on-edit rule run on the imported tests changed other files"
+rf_back
 
 echo "-- kinds, intake items, the formatter on import, delta runs and the stop (issues 13, 17)"
 printf '{"version":1,"owner":{"name":"Ada"},"inbox":"claude_outputs","checks":{"on_edit":[{"name":"fmt","paths":["tests/red_k*"],"run":"echo \\"# formatted\\" >> \\"$SB_FILE\\""}],"on_stop":[{"name":"tests","paths":["src/**","tests/**"],"run":"sh tests/check.sh"}]},"red":{"test_paths":["tests/**"]}}\n' > "$rf/.claude/serial-build.json"
@@ -737,7 +758,7 @@ git -C "$rf" worktree add -q --detach "$wk" HEAD && printf 'grep -q fixed_k2 src
 printf '## Findings\n- red-k2: an unset TALLY_HOME gives exit 0.\n  Kind: a bad startup variable is not refused by name.\n  Test: tests/red_k2.sh. Reproduce: `sh tests/red_k2.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/k2.md"
 script "$rf" red-file.sh --output "$WORK/k2.md" --worktree "$wk" --delta
 expect "the second delta run with findings says to stop and ask about scope (issue 13)" 0 "STOP. This is the second delta run with findings"
-git -C "$rf" reset -q --hard "$rfbase" && git -C "$rf" clean -qfd -- tests docs; script "$rf" red-guard.sh abort
+rf_back
 
 echo "-- the run before handoff after a partial run does not count toward the stop (review)"
 { awk '/^## Red$/ { exit } { print }' "$rf/docs/plan.md"
@@ -751,7 +772,18 @@ for n in 1 2; do
   commit "$rf" "Red: rf-gate, run $n after the partial"
 done
 case "$out" in *STOP*) no "two runs with findings after a partial run are one fix round, not two" "$out" ;; *) ok "two runs with findings after a partial run are one fix round, not two" ;; esac
-git -C "$rf" reset -q --hard "$rfbase" && git -C "$rf" clean -qfd -- tests docs; script "$rf" red-guard.sh abort
+rf_back
+
+echo "-- the stop counts only the delta runs since the last full run (review)"
+{ awk '/^## Red$/ { exit } { print }' "$rf/docs/plan.md"
+  printf '## Red\n\nRed run: 2026-10-25, 2 attempts, 1 findings. Source: `red-rf-gate-%s`. Delta run.\n\n- red-o1: x. Test: `tests/o1.sh@0`. Reproduce: `true`.\n\nAttempts that found nothing:\n- a: nothing.\n\nRed run: 2026-10-25, 2 attempts, 1 findings. Source: `red-rf-gate-%s`.\n\n- red-o2: x. Test: `tests/o2.sh@0`. Reproduce: `true`.\n\nAttempts that found nothing:\n- a: nothing.\n' "$today" "$today"; } > "$WORK/pp" && cp "$WORK/pp" "$rf/docs/plan.md"
+commit "$rf" "Red: an old delta, then a full run"
+script "$rf" red-guard.sh snapshot
+git -C "$rf" worktree add -q --detach "$wk" HEAD && printf 'grep -q never_o src/tally/core.py\n' > "$wk/tests/red_o3.sh"
+printf '## Findings\n- red-o3: it breaks.\n  Test: tests/red_o3.sh. Reproduce: `sh tests/red_o3.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/o3.md"
+script "$rf" red-file.sh --output "$WORK/o3.md" --worktree "$wk" --delta
+case "$out" in *STOP*) no "a delta run before the last full run does not count toward the stop" "$out" ;; *) ok "a delta run before the last full run does not count toward the stop" ;; esac
+rf_back
 
 echo "-- a partial run and the run after it meet the list together (issue 14)"
 cp "$rf/docs/plan.md" "$WORK/plan.keep"

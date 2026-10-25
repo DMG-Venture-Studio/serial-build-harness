@@ -94,15 +94,15 @@ rows=$(LC_ALL=C awk '
     if (cur == "") return
     if (kind == "F") {
       slug = cur; sub(/^([-*]|[0-9]+[.)]) +/, "", slug); sub(/:.*/, "", slug); slug = tolower(slug); gsub(/[_.]/, "-", slug)
-      what = cur; sub(/^([-*]|[0-9]+[.)]) +[Rr][Ee][Dd]-[A-Za-z0-9_.-]*:[ ]*/, "", what); sub(/[ ]*(Kind|Test|Reproduce|Seen):.*/, "", what); sub(/[ .]*$/, "", what)
-      k = "-"; if (index(cur, "Kind: ")) { k = cur; sub(/.*Kind: */, "", k); sub(/ *(Test|Reproduce|Seen):.*/, "", k); gsub(/`/, "", k); sub(/[ .]*$/, "", k) }
-      test = "-"; if (match(cur, /Test: `?[^ `]+/)) { test = substr(cur, RSTART + 6, RLENGTH - 6); gsub(/`/, "", test); sub(/[.,;]$/, "", test) }
+      what = cur; sub(/^([-*]|[0-9]+[.)]) +[Rr][Ee][Dd]-[A-Za-z0-9_.-]*:[ ]*/, "", what); sub(/(^|[ .])(Kind|Test|Reproduce|Seen): .*/, "", what); sub(/[ .]*$/, "", what)
+      k = "-"; if (match(cur, /(^|[ .])Kind: /)) { k = substr(cur, RSTART + RLENGTH); sub(/(^|[ .])(Test|Reproduce|Seen): .*/, "", k); gsub(/`/, "", k); sub(/[ .]*$/, "", k) }
+      test = "-"; if (match(cur, /(^|[ .])Test: `?[^ `]+/)) { test = substr(cur, RSTART, RLENGTH); sub(/^.*Test: /, "", test); gsub(/`/, "", test); sub(/[.,;]$/, "", test) }
       cmd = "-"; if (match(cur, /Reproduce: `[^`]*`/)) cmd = substr(cur, RSTART + 12, RLENGTH - 13)
       printf "F\t%s\t%s\t%s\t%s\t%s\n", slug, what, test, cmd, k
     } else { a = cur; sub(/^([-*]|[0-9]+[.)]) +/, "", a); printf "%s\t%s\n", kind, a }
     cur = ""
   }
-  /^#+ / { flush(); sec = tolower($0); if (sec !~ /attempt|intake/ && $0 ~ /[Rr][Ee][Dd]-[A-Za-z0-9]/) printf "U\t%s\n", trim($0); next }
+  /^#+ / { flush(); sec = tolower($0); if (sec !~ /attempt|intake/ && $0 ~ /[Rr][Ee][Dd]-[A-Za-z0-9_.-]+:/) printf "U\t%s\n", trim($0); next }
   cur != "" && /^[ \t]+[^ \t]/ { cur = cur " " trim($0); next }
   { flush() }
   sec ~ /finding/ && /^([-*]|[0-9]+[.)]) +[Rr][Ee][Dd]-[A-Za-z0-9_.-]+:/ { kind = "F"; cur = trim($0); next }
@@ -148,6 +148,17 @@ fi
 # Tests came back but the report names no finding: a report the script could
 # not read is never filed as a clean run.
 imported=$(printf '%s\n' "${im:-}" | sed -n '/^imported:$/,$p' | sed '1d; /^red-import:/d; /^$/d')
+# A test named only by an item outside Findings (under For intake, or under
+# Attempts) would be left behind, failing and unrecorded.
+stray=$(printf '%s\n' "$imported" | while IFS= read -r t; do
+  [ -n "$t" ] || continue
+  printf '%s\n' "$rows" | awk -F '\t' -v t="$t" '$1 == "F" && ($4 == t || index($4, t "::") == 1) { f = 1 } END { exit !f }' && continue
+  printf '%s\n' "$rows" | awk -F '\t' -v t="$t" '($1 == "I" || $1 == "A") && index($2, t) { f = 1 } END { exit !f }' && printf '  %s\n' "$t"
+done)
+if [ -n "$stray" ]; then
+  printf 'red-file: these imported tests are named by an item under For intake or Attempts, not by a finding, so they would be left failing and unrecorded; nothing was recorded:\n%s\nA failing test is a finding: ask the agent to restate it under "## Findings", or to remove the test. Then run red-file.sh again.\n' "$stray" >&2
+  exit 1
+fi
 if [ -n "$imported" ] && ! printf '%s\n' "$rows" | grep -q '^F'; then
   printf 'red-file: the agents brought back these test files, but their reports hold no finding in the form "- red-<slug>: ..." under "## Findings", so nothing was recorded:\n%s\nThe tests are in the project, uncommitted. Ask the agent to restate its findings in the form agents/red-breaker.md gives, save that response, and run red-file.sh again with it (verify passes again while only tests changed).\n' "$(printf '%s\n' "$imported" | sed 's/^/  /')" >&2
   exit 1
@@ -261,7 +272,12 @@ fi
 if [ -n "$runkind" ] && [ "$runkind" = " Delta run." ] && [ "$nf" -gt 0 ]; then
   # The run before handoff after a partial run is marked a delta run but is not
   # a fix round, so it does not count toward the stop.
-  deltas=$(awk '/^Red run:/ { if ($0 ~ / Delta run\./ && $0 !~ / 0 findings\./ && !afterpartial) n++; afterpartial = ($0 ~ / Partial run\./) } END { print n + 0 }' "$plan")
+  # Only this fix chain counts: the delta runs after the last full run.
+  deltas=$(awk '/^Red run:/ {
+      if ($0 ~ / Partial run\./) { n = 0; afterpartial = 1; next }
+      if ($0 !~ / Delta run\./) { n = 0; afterpartial = 0; next }
+      if ($0 !~ / 0 findings\./ && !afterpartial) n++
+      afterpartial = 0 } END { print n + 0 }' "$plan")
   if [ "$deltas" -ge 2 ]; then
     printf '\nred-file: STOP. This is the second delta run with findings. Another round would patch the next neighbour; ask the owner whether the gate'"'"'s scope or the fix approach is wrong before any more fixing.\n'
   fi
