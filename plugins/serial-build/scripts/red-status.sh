@@ -19,7 +19,8 @@
 # A run is credible when: N >= 1; it lists its fruitless attempts; those plus its
 # findings add up to at least N; it has exactly F findings; and its raw output is
 # filed under docs/decisions/sources/<slug>.md. At least one run must declare at
-# least as many attempts as the plan's "Tried to break" list has bullets.
+# least as many attempts as the plan's "Tried to break" list has bullets; a run
+# marked "Partial run." counts together with the run after it.
 #
 # A finding is resolved only when all hold: its test file exists with the content
 # recorded (the latest re-pin's blob, else the finding's); its bullet is unchanged
@@ -78,12 +79,16 @@ if [ "$runs" -eq 0 ]; then
   echo "red-status: $gate has no red run recorded in docs/plan.md; run /serial-build:red before handing off"
   exit 1
 fi
-most=0
+most=0 prev=0
 while IFS="$TAB" read -r kind r n d src has att found runline; do
   [ "$kind" = RUN ] || continue
   [ "$n" = - ] && n=0
   [ "$src" = - ] && src=
   [ "$n" -gt "$most" ] && most=$n
+  # A partial run (finished slices only, while the builder waited) and the run
+  # after it cover the list together.
+  [ $((prev + n)) -gt "$most" ] && [ "$prev" -gt 0 ] && most=$((prev + n))
+  case "$runline" in *" Partial run."*) prev=$n ;; *) prev=0 ;; esac
   [ "$n" -ge 1 ] || problems="${problems}run $r declares no attempts; a red run with nothing tried is not a red run
 "
   [ "$has" = 1 ] || problems="${problems}run $r has no \"Attempts that found nothing:\" list
@@ -102,7 +107,7 @@ while IFS="$TAB" read -r kind r n d src has att found runline; do
 done <<EOF
 $(rows RUN)
 EOF
-[ "$most" -ge "${tried:-0}" ] || problems="${problems}no run declares at least the $tried attempts on the plan's Tried to break list (the most is $most)
+[ "$most" -ge "${tried:-0}" ] || problems="${problems}no run (or partial run with the run after it) declares at least the $tried attempts on the plan's Tried to break list (the most is $most)
 "
 [ -n "$(rows ORPHAN)" ] && problems="${problems}a red finding sits above the first \"Red run:\" line
 "

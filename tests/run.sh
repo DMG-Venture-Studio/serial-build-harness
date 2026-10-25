@@ -324,11 +324,11 @@ expect "nor into an agent worktree" 2 "red lock is held"
 hook "$proj" red-lock.sh "$(write_input "$WORK/elsewhere/notes.md")"; silent "a write outside the project passes"
 hook "$proj" red-lock.sh "$(red_input Write "\"file_path\":\"$proj/.claude/worktrees/agent-x/tests/t.py\"")"; silent "the red-breaker agent is not locked out"
 hook "$proj" red-lock.sh "$(red_bash "uv run pytest tests/t.py")"; silent "the red-breaker agent may run its tests"
-for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'cat a | tee b' 'find . -name x -delete' 'git checkout -- .' 'sh tests/check.sh' 'make dev' 'git stash' 'ls $(rm -rf src)' 'sh /p/scripts/red-guard.sh verify; rm -rf src' 'rm -rf src /x/scripts/red-guard.sh' 'touch evil /x/scripts/red-file.sh' 'sort -o f a' 'uniq a out' 'date -s 12:00' 'git diff --output=x' 'git log --output=x' 'git -c core.fsmonitor=evil status'; do
+for c in 'uv run pytest -q' 'ruff check src' 'echo x > cat' 'ls; touch src/x' 'cat a | tee b' 'find . -name x -delete' 'git checkout -- .' 'sh tests/check.sh' 'make dev' 'git stash' 'ls $(rm -rf src)' 'sh /p/scripts/red-guard.sh verify; rm -rf src' 'rm -rf src /x/scripts/red-guard.sh' 'touch evil /x/scripts/red-file.sh' 'sort -o f a' 'uniq a out' 'date -s 12:00' 'git diff --output=x' 'git log --output=x' 'git -c core.fsmonitor=evil status' "git log > $proj/out.txt" 'git log > out.txt' "ls > $proj/.git/hooks/post-commit" "cat a | tee $proj/src/x" 'gh pr merge 3' 'gh api repos/x' "git -C $proj push" 'sort -o f a' 'rg --pre cat x' 'git log > /tmp/../$proj/x'; do
   hook "$proj" red-lock.sh "$(main_bash "$c")"
   expect "the lock refuses for the builder: $c" 2 "is refused while it is held"
 done
-for c in 'sh /x/scripts/red-file.sh --output /tmp/o.md --cost \"26 min, 1.4M tokens\"' 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'sh \"/x y/scripts/red-pack.sh\" core' 'FOO=1 pwd'; do
+for c in 'sh /x/scripts/red-file.sh --output /tmp/o.md --cost \"26 min, 1.4M tokens\"' 'git status' 'git log --oneline -3' 'ls -la 2>/dev/null' 'grep -rn x src | head -n 3' 'ps aux' 'kill 4242' 'find . -name *.log -mmin -2' 'git worktree list' 'sh /x/plugins/serial-build/scripts/red-guard.sh verify' 'sh /x/scripts/red-guard.sh abort' 'sh /x/scripts/red-file.sh --output /tmp/o.md --worktree /p/.claude/worktrees/agent-1' 'sh \"/x y/scripts/red-pack.sh\" core' 'FOO=1 pwd' "git log --oneline > $WORK/notes/log.txt" "cat a | tail -n 3 > $WORK/t.txt 2>&1" "git diff | tee $WORK/d.txt | head" 'gh run list' 'gh pr view 3 --comments' 'gh issue list -R o/r' "git -C $proj remote get-url origin" "git -C $proj log -1" 'git branch -a' 'sort -u a | uniq -c' 'date +%s' 'sh /x/scripts/red-brief.sh --out /tmp/rb --lane core'; do
   hook "$proj" red-lock.sh "$(main_bash "$c")"; silent "the lock allows for the builder: $c"
 done
 hook "$proj" session-start.sh '{"session_id":"s4","source":"startup"}'
@@ -432,7 +432,7 @@ status; expect "\"0 attempts\" is not a red run" 1 "declares no attempts"
 { plan_head; red_section 2 1 red-match-one-month-2026-10-02 ""; } > "$proj/docs/plan.md"
 status; expect "a run must list its fruitless attempts" 1 "no \"Attempts that found nothing:\" list"
 { plan_head; red_section 1 0 red-match-one-month-2026-10-02 "$attempts"; } > "$proj/docs/plan.md"
-status; expect "a run must cover the plan's Tried to break list" 1 "no run declares at least the 2 attempts"
+status; expect "a run must cover the plan's Tried to break list" 1 "declares at least the 2 attempts"
 { plan_head; red_section 5 1 red-match-one-month-2026-10-02 "$attempts"; } > "$proj/docs/plan.md"
 status; expect "declared attempts must all be listed" 1 "declares 5 attempts but lists only 1"
 { plan_head; red_section 2 1 red-nowhere "$attempts"; } > "$proj/docs/plan.md"
@@ -681,6 +681,69 @@ expect "a reproduce command that changes product code stops the filing" 1 "chang
 check "and names the file" 'printf "%s" "$out" | grep -q "src/tally/core.py"'
 rf_reset
 
+echo "-- red-pack --out and red-brief: the brief is a generated file, not retyped (issue 16)"
+rfbase=$(git -C "$rf" rev-parse HEAD)
+script "$rf" red-pack.sh --out "$rf/pack.md"
+expect "red-pack refuses to write inside the project" 1 "outside the project"
+script "$rf" red-pack.sh --out "$WORK/packs/p.md"
+expect "red-pack writes the pack to a file outside the project" 0 "wrote the context pack"
+check "the pack file holds the pack" 'grep -q "^# Context pack: rf-gate" "$WORK/packs/p.md"'
+awk '{ print } /^Acceptance:/ { print ""; print "Supporting (built here though neither the demo nor the acceptance sentence needs it):"; print "- the consistency check: the next gate deploys with it" }' "$rf/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$rf/docs/plan.md"
+commit "$rf" "Plan: name the supporting item"
+script "$rf" red-brief.sh --out "$rf/brief"
+expect "red-brief refuses to write inside the project" 1 "outside the project"
+script "$rf" red-brief.sh --out "$WORK/rb"
+expect "red-brief writes the brief and the pack, and prints the one line to brief with" 0 "Read $WORK/rb/brief.md and follow it"
+check "the brief holds the gate, the attack order with the supporting item second, the pack's path, and the report form" 'grep -q "^Acceptance: Ada can say it refuses an empty statement." "$WORK/rb/brief.md" && grep -q "^1. The acceptance sentence" "$WORK/rb/brief.md" && grep -q "^- the consistency check" "$WORK/rb/brief.md" && grep -q "Read $WORK/rb/pack.md first" "$WORK/rb/brief.md" && grep -q "^## Findings" "$WORK/rb/brief.md" && grep -q "Kind: <the class of bug" "$WORK/rb/brief.md" && [ -f "$WORK/rb/pack.md" ]' "$(cat "$WORK/rb/brief.md")"
+script "$rf" red-brief.sh --out "$WORK/rb" --delta
+check "a delta brief is regressions only and lists the findings to re-attack (issue 13)" 'grep -q "A delta run: regressions only" "$WORK/rb/brief.md" && grep -q "red-empty-statement" "$WORK/rb/brief.md" && ! grep -q "^## Your minimum" "$WORK/rb/brief.md"'
+script "$rf" red-brief.sh --out "$WORK/rb" --partial "the parser"
+check "a partial brief names the finished slices (issue 14)" 'grep -q "these slices are finished: the parser" "$WORK/rb/brief.md"'
+
+echo "-- red-file never files an unreadable report as clean (issue 17)"
+script "$rf" red-guard.sh snapshot
+printf '## Findings\n\n### red-heading: the total is off\n- Test: tests/a.sh\n- Reproduce: `sh tests/a.sh`\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/headings.md"
+script "$rf" red-file.sh --output "$WORK/headings.md"
+expect "a finding written as a heading stops everything" 1 "### red-heading"
+wz="$rf/.claude/worktrees/agent-z"
+git -C "$rf" worktree add -q --detach "$wz" HEAD && printf 'grep -q never src/tally/core.py\n' > "$wz/tests/red_z.sh"
+printf 'Six things broke, see below.\n\n1) the total\n2) the header\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/prose.md"
+script "$rf" red-file.sh --output "$WORK/prose.md" --worktree "$wz"
+expect "tests came back but the report names no finding: nothing is recorded" 1 "brought back these test files"
+check "and no clean run was filed" '! grep -q "Red run: .*, 1 attempts, 0 findings" "$rf/docs/plan.md"'
+git -C "$rf" reset -q --hard "$rfbase" && git -C "$rf" clean -qfd -- tests docs; script "$rf" red-guard.sh abort
+
+echo "-- kinds, intake items, the formatter on import, delta runs and the stop (issues 13, 17)"
+printf '{"version":1,"owner":{"name":"Ada"},"inbox":"claude_outputs","checks":{"on_edit":[{"name":"fmt","paths":["tests/red_k*"],"run":"echo \\"# formatted\\" >> \\"$SB_FILE\\""}],"on_stop":[{"name":"tests","paths":["src/**","tests/**"],"run":"sh tests/check.sh"}]},"red":{"test_paths":["tests/**"]}}\n' > "$rf/.claude/serial-build.json"
+commit "$rf" "a formatter for red tests"
+script "$rf" red-guard.sh snapshot
+wk="$rf/.claude/worktrees/agent-k"
+git -C "$rf" worktree add -q --detach "$wk" HEAD && printf 'grep -q fixed_k1 src/tally/core.py\n' > "$wk/tests/red_k1.sh"
+printf '## Findings\n- red-k1: a blank TALLY_HOME gives a traceback.\n  Kind: a bad startup variable is not refused by name.\n  Test: tests/red_k1.sh. Reproduce: `sh tests/red_k1.sh`.\n\n## For intake\n- the refusal says bad, not invalid.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/k1.md"
+script "$rf" red-file.sh --output "$WORK/k1.md" --worktree "$wk" --delta
+expect "a delta run with a kind is filed" 0 "a bad startup variable is not refused by name"
+check "the kind and the delta mark are recorded, and the intake item is named, not filed" 'grep -q "^- red-k1: a blank TALLY_HOME gives a traceback. Kind: \`a bad startup variable is not refused by name\`. Test:" "$rf/docs/plan.md" && grep -q "^Red run: .* Delta run\." "$rf/docs/plan.md" && printf "%s" "$out" | grep -q "the refusal says bad, not invalid" && ! grep -q "refusal says bad" "$rf/docs/plan.md"' "$out"
+check "the imported test went through the project's formatter before its fingerprint was taken" 'tail -n 1 "$rf/tests/red_k1.sh" | grep -q "# formatted" && grep -q "tests/red_k1.sh@$(git -C "$rf" hash-object tests/red_k1.sh)" "$rf/docs/plan.md"'
+case "$out" in *STOP*) no "one delta run with findings does not stop the loop" "$out" ;; *) ok "one delta run with findings does not stop the loop" ;; esac
+commit "$rf" "Red: rf-gate, delta 1"
+script "$rf" red-guard.sh snapshot
+git -C "$rf" worktree add -q --detach "$wk" HEAD && printf 'grep -q fixed_k2 src/tally/core.py\n' > "$wk/tests/red_k2.sh"
+printf '## Findings\n- red-k2: an unset TALLY_HOME gives exit 0.\n  Kind: a bad startup variable is not refused by name.\n  Test: tests/red_k2.sh. Reproduce: `sh tests/red_k2.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/k2.md"
+script "$rf" red-file.sh --output "$WORK/k2.md" --worktree "$wk" --delta
+expect "the second delta run with findings says to stop and ask about scope (issue 13)" 0 "STOP. This is the second delta run with findings"
+git -C "$rf" reset -q --hard "$rfbase" && git -C "$rf" clean -qfd -- tests docs; script "$rf" red-guard.sh abort
+
+echo "-- a partial run and the run after it meet the list together (issue 14)"
+cp "$rf/docs/plan.md" "$WORK/plan.keep"
+{ awk '/^## Red$/ { exit } { print }' "$WORK/plan.keep"
+  printf '## Red\n\nRed run: 2026-10-25, 1 attempts, 0 findings. Source: `red-rf-gate-%s`. Partial run.\n\nAttempts that found nothing:\n- an empty statement: refused.\n\nRed run: 2026-10-25, 1 attempts, 0 findings. Source: `red-rf-gate-%s`. Delta run.\n\nAttempts that found nothing:\n- a broken neighbour: refused.\n' "$today" "$today"; } > "$rf/docs/plan.md"
+script "$rf" red-status.sh --record
+expect "a partial run plus the next run cover the two attempts" 0 "well formed"
+sed 's/ Partial run\.//' "$rf/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$rf/docs/plan.md"
+script "$rf" red-status.sh --record
+expect "two ordinary runs of one attempt each do not" 1 "declares at least the 2 attempts"
+cp "$WORK/plan.keep" "$rf/docs/plan.md"
+
 echo "-- a voided run is recorded with the next filing, and the done entry states the cost (issue 2)"
 script "$rf" red-guard.sh snapshot
 echo planted >> "$rf/src/tally/core.py"
@@ -830,11 +893,14 @@ check "the breaker is told to write tests with the Write tool, not shell redirec
 check "intake commits, then summarises, and waits only for glossary entries and contradictions (issue 9)" 'grep -q "Stop and wait before committing in exactly two cases" "$P/skills/intake/SKILL.md" && ! grep -q "Commit on approval" "$P/skills/intake/SKILL.md"'
 check "gate steps 2 to 4 never ask the owner (issue 9)" 'grep -q "Steps 2 to 4 never call AskUserQuestion" "$P/skills/gate/SKILL.md"'
 check "the gate template runs the demo before the red task (issue 8)" 'awk "/Run the demo end to end/ { d = NR } /Run \/serial-build:red on this gate/ { r = NR } END { exit !(d && r && d < r) }" "$P/skills/gate/SKILL.md"'
-check "the red skill runs from a fresh session and has a post-fix delta run (issues 2, 3)" 'grep -q "Run this skill in a fresh session" "$P/skills/red/SKILL.md" && grep -q "## After the fixes: the delta run" "$P/skills/red/SKILL.md"'
+check "the red skill runs from a fresh session and has a post-fix delta run (issues 2, 3)" 'grep -q "Run this skill in a fresh session" "$P/skills/red/SKILL.md" && grep -q "## 9. The fix and delta loop, chained" "$P/skills/red/SKILL.md"'
 check "the breaker carries the rules against re-pins (issue 3)" 'grep -q "One finding per test file" "$P/agents/red-breaker.md" && grep -q "at least 5x the measured latency" "$P/agents/red-breaker.md"'
 check "intake folds a cleanup-only finding into the next product gate, stating the cost (issue 5)" 'grep -q "^f. \*\*Cleanup only\*\*" "$P/skills/intake/SKILL.md" && grep -q "blocks that" "$P/skills/intake/SKILL.md"'
 check "handoff starts the next gate's draft without asking, and never a building session (issue 6)" 'grep -q "start drafting it" "$P/skills/handoff/SKILL.md" && grep -q "without asking" "$P/skills/handoff/SKILL.md" && grep -q "Never launch a background session that builds" "$P/skills/handoff/SKILL.md"'
 check "gate takes a waiting draft through the delta check (issue 4)" 'grep -q "plan-draft.sh delta" "$P/skills/gate/SKILL.md" && grep -q "\-\-draft <gate-slug>" "$P/skills/gate/SKILL.md"'
+check "the red skill chains fix and delta runs through fresh agents, stopping on a second delta with findings (issues 13, 15)" 'grep -q "serial-build:red-fixer" "$P/skills/red/SKILL.md" && grep -q "STOP" "$P/skills/red/SKILL.md" && [ -f "$P/agents/red-fixer.md" ] && grep -q "Never edit a red test" "$P/agents/red-fixer.md" && grep -q "table-driven test" "$P/agents/red-fixer.md"'
+check "the red skill allows a partial run while the builder waits outside the repo (issue 14)" 'grep -q "A partial run, earlier" "$P/skills/red/SKILL.md" && grep -q "partial red run" "$P/skills/gate/SKILL.md"'
+check "the gate review asks of every item whether the demo or acceptance needs it (issue 18)" 'grep -q "does the demo or the" "$P/skills/gate/SKILL.md" && grep -q "^Supporting (built here" "$P/skills/gate/SKILL.md"'
 missing_next=$(for k in gate intake red demo-brief handoff; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
 check "every step names the next command (issue 6)" '[ -z "$missing_next" ] && grep -q "next: \`/clear\`" "$P/skills/gate/SKILL.md"' "$missing_next"
 
