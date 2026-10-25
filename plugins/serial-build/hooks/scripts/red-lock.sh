@@ -132,7 +132,7 @@ if [ "$tool" = Bash ]; then
     # repository, and the shared .git.
     bad=$(printf '%s\n' "$verdict" | sed -n 's/^T	//p' | while IFS= read -r t; do
       case "$t" in
-        /proc/*|/dev/fd/*|*'*'*|*'?'*|*'['*|*'{'*|*'~'*|*'$'*|*/.*) printf 'a write to %s (only a plain absolute path outside the project may be written)\n' "$t"; break ;;
+        /proc/*|/dev/fd/*|*//*|*'*'*|*'?'*|*'['*|*'{'*|*'~'*|*'$'*|*/.*) printf 'a write to %s (only a plain absolute path outside the project may be written)\n' "$t"; break ;;
       esac
       if ! sb_outside_project "$t"; then
         printf 'a write to %s (only a path outside the project may be written)\n' "$t"; break
