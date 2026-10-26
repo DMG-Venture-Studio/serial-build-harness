@@ -61,6 +61,18 @@ jget() { LC_ALL=C awk -f "$S/json.awk" < "$1" | LC_ALL=C awk -v k="$2" -f "$S/js
 
 echo "== running with: $SHELL_UNDER_TEST"
 
+# ---------------------------------------------------------------- parsing
+# A script that does not parse fails every call that reaches the broken line,
+# allowed or not. macOS's /bin/sh is bash 3.2, which ends a $( ) at a case
+# pattern's bare ")"; write the pattern as "(pattern)" inside a substitution.
+echo "-- every plugin shell script parses under /bin/sh and $SHELL_UNDER_TEST"
+unparsed=$(find "$P" -name '*.sh' | sort | while IFS= read -r f; do
+  for sh_ in /bin/sh "$SHELL_UNDER_TEST"; do
+    e=$("$sh_" -n "$f" 2>&1) || printf '%s (%s): %s\n' "${f#"$REPO"/}" "$sh_" "$e"
+  done
+done)
+check "every plugin shell script parses (sh -n)" '[ -z "$unparsed" ]' "$unparsed"
+
 # ---------------------------------------------------------------- no config
 echo "-- a project without .claude/serial-build.json: every hook is silent"
 bare="$WORK/bare"

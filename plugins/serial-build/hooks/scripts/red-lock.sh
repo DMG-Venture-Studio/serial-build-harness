@@ -132,10 +132,11 @@ if [ "$tool" = Bash ]; then
     # A write target must be a plain absolute path (no glob, no /proc or
     # /dev/fd alias, no dot folder such as ~/.gitconfig, which would turn a
     # read-only git into code) that resolves outside the project, its
-    # repository, and the shared .git.
+    # repository, and the shared .git. The pattern opens with "(" because
+    # bash 3.2 (macOS's sh) ends a $( ) at a case pattern's bare ")".
     bad=$(printf '%s\n' "$verdict" | sed -n 's/^T	//p' | while IFS= read -r t; do
       case "$t" in
-        /proc/*|/dev/fd/*|*//*|*'*'*|*'?'*|*'['*|*'{'*|*'~'*|*'$'*|*/.*) printf 'a write to %s (only a plain absolute path outside the project may be written)\n' "$t"; break ;;
+        (/proc/*|/dev/fd/*|*//*|*'*'*|*'?'*|*'['*|*'{'*|*'~'*|*'$'*|*/.*) printf 'a write to %s (only a plain absolute path outside the project may be written)\n' "$t"; break ;;
       esac
       if ! sb_outside_project "$t"; then
         printf 'a write to %s (only a path outside the project may be written)\n' "$t"; break
