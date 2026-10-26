@@ -8,6 +8,8 @@
 # because re-running a suite that holds a committed red-lane test would otherwise
 # block every turn. Never blocks while stop_hook_active is set, so it cannot loop.
 # The failure is kept for the session-start hook, so the next session is told.
+# While a proof run holds the proof marker (run-proofs.sh, ship-gate.sh), it
+# runs nothing: a proof may have the tree half-changed on purpose until it ends.
 # Paths are relative to the project, which may be a subfolder of a larger
 # repository. Needs git to see what changed; without it, does nothing.
 # No config: exit 0, silent.
@@ -22,6 +24,12 @@ n=$(sb_count "$SB_CFG" checks.on_stop)
 [ "$n" -gt 0 ] || exit 0
 command -v git >/dev/null 2>&1 || exit 0
 git -C "$SB_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
+
+pid=$(sb_proof_running); proofs=$?
+if [ "$proofs" -eq 0 ]; then
+  printf 'serial-build: proofs are running (pid %s) and may have the tree half-changed on purpose, so the stop checks wait for a turn end after they finish.\n' "$pid"
+  exit 0
+fi
 
 changed=$(sb_changed_files)
 [ -n "$changed" ] || exit 0
@@ -55,6 +63,7 @@ while [ "$i" -lt "$n" ]; do
     printf '%s\n' "$fingerprint:fail" > "$stamp"
     { printf '%s failed at the last turn end (command: %s):\n' "$name" "$run"; tail -n 10 "$out"; } > "$stamp.why"
     printf '%s failed on the uncommitted changes (command: %s):\n%s\n' "$name" "$run" "$(tail -n 40 "$out")" >&2
+    [ "$proofs" -eq 2 ] && printf 'A proof run (pid %s) died without finishing, so this may be a temporary change it left in the tree, not yours; see git status.\n' "$pid" >&2
     status=2
   fi
 done

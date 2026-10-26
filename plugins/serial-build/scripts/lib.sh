@@ -130,6 +130,47 @@ sb_red_lock() {
   printf '%s/serial-build/red-lock-%s\n' "$_sb_c" "$_sb_k"
 }
 
+# The proof marker's path, for SB_ROOT, beside the red lock for the same reason.
+# A script that re-runs proofs holds it, because a proof may change the tree on
+# purpose and undo the change at its end (a planted-violation check), and the
+# stop hook must not test the half-changed tree. Status 1 outside git.
+sb_proof_marker() {
+  _sb_l=$(sb_red_lock) || return 1
+  printf '%s/proofs-%s\n' "${_sb_l%/*}" "${_sb_l##*/red-lock-}"
+}
+
+# sb_proof_hold NAME: takes the proof marker for this script (pid $$, NAME being
+# the script's file name). Status 1, taking nothing, while a live run holds it.
+# The caller releases it with sb_proof_release in its EXIT trap, and turns
+# INT, TERM and HUP into an exit so the trap runs.
+sb_proof_hold() {
+  _sb_m=$(sb_proof_marker) || return 0
+  sb_proof_running >/dev/null && return 1
+  mkdir -p "${_sb_m%/*}" && printf '%s %s\n' "$$" "$1" > "$_sb_m"
+}
+sb_proof_release() {
+  _sb_m=$(sb_proof_marker) || return 0
+  [ "$(cut -d ' ' -f 1 "$_sb_m" 2>/dev/null)" = "$$" ] && rm -f "$_sb_m"
+  return 0
+}
+
+# sb_proof_running: prints the holder's pid. Status 0 while that process is
+# alive and, where ps can tell, still the script that took it (so a pid reused
+# after a reboot does not hold it); 2 when the marker is stale, left by a run
+# that died; 1 when there is none.
+sb_proof_running() {
+  _sb_m=$(sb_proof_marker) || return 1
+  [ -f "$_sb_m" ] || return 1
+  read -r _sb_pid _sb_name < "$_sb_m" 2>/dev/null
+  printf '%s\n' "${_sb_pid:-?}"
+  case "$_sb_pid" in '' | *[!0-9]*) return 2 ;; esac
+  kill -0 "$_sb_pid" 2>/dev/null || return 2
+  if _sb_args=$(ps -p "$_sb_pid" -o args= 2>/dev/null) && [ -n "$_sb_args" ]; then
+    case "$_sb_args" in *"${_sb_name:-?}"*) ;; *) return 2 ;; esac
+  fi
+  return 0
+}
+
 # sb_outside_project PATH: PATH is absolute and lies outside SB_ROOT, the
 # repository's top, and its shared .git, so writing it cannot void a red run.
 sb_outside_project() {
