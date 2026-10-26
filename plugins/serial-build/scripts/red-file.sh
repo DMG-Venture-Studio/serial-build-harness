@@ -20,9 +20,10 @@
 #   7. Files the responses verbatim as one decision source,
 #      docs/decisions/sources/red-<gate>-<date>[-n].md, one section per lane.
 #   8. Appends the Red run to docs/plan.md's "## Red" section: the run line (with
-#      --cost, if given), each finding with its test's git blob hash, and the
-#      fruitless attempts. Runs voided since the last filing are recorded above
-#      it as "Voided red run:" lines, so the done entry states the true cost.
+#      the lanes --skipped and --cost, if given), each finding with its test's
+#      git blob hash, and the fruitless attempts. Runs voided since the last
+#      filing are recorded above it as "Voided red run:" lines, so the done
+#      entry states the true cost.
 #
 # A void (3 or 4) records nothing in the project, remembers the void for the
 # next filing, and prints the command that salvages the agents' tests. After a
@@ -32,16 +33,19 @@
 # finding counts only if it fails for the reason the agent gave), check it with
 # red-status.sh --record, then commit.
 #
-# Usage: red-file.sh --output FILE [--output FILE]... [--worktree DIR]... [--cost "<text>"]
+# Usage: red-file.sh --output FILE [--output FILE]... [--worktree DIR]... [--skipped "<lane>: <why>"]... [--cost "<text>"]
 #   --output    a file holding one red-breaker agent's response, verbatim; one per lane
+#               that ran, which may be fewer than red.lanes names
 #   --worktree  an agent's worktree, when its result named one (it changed something)
+#   --skipped   a lane of red.lanes this run did not brief, and why; the run line
+#               names it and the filed source says why, so a skip is never silent
 #   --cost      what the run cost, as the harness reported it ("26 min, 1.4M tokens")
 set -u
 SB_PLUGIN=$(cd "$(dirname "$0")/.." && pwd)
 . "$SB_PLUGIN/scripts/lib.sh"
 refuse() { printf 'red-file: %s\n' "$1" >&2; exit 1; }
-outputs= wts= cost= runkind=
-usage='usage: red-file.sh --output FILE [--output FILE]... [--worktree DIR]... [--cost "<text>"] [--delta | --partial]'
+outputs= wts= cost= runkind= skipped=
+usage='usage: red-file.sh --output FILE [--output FILE]... [--worktree DIR]... [--skipped "<lane>: <why>"]... [--cost "<text>"] [--delta | --partial]'
 while [ $# -gt 0 ]; do
   case "$1" in
     --delta) runkind=" Delta run." ;;
@@ -49,6 +53,9 @@ while [ $# -gt 0 ]; do
     --output) [ -f "${2:-}" ] || refuse "--output needs a file holding the agent's response"; outputs="$outputs$2
 "; shift ;;
     --worktree) [ -d "${2:-}" ] || refuse "--worktree needs the agent's worktree folder"; wts="$wts$2
+"; shift ;;
+    --skipped) case "${2:-}" in *:*[![:space:]]*) ;; *) refuse "--skipped needs \"<lane>: <why>\", the lane and why this run did not brief it" ;; esac
+      skipped="$skipped$2
 "; shift ;;
     --cost) cost=${2:-}; shift ;;
     *) refuse "$usage" ;;
@@ -65,6 +72,23 @@ today=$(date +%Y-%m-%d)
 state=$(sb_state_dir)
 voids="$state/red-voids"
 TAB=$(printf '\t')
+
+# A skipped lane must be one the config names, or the record would claim a skip
+# of a lane that does not exist.
+skipnames=
+while IFS= read -r sk; do
+  [ -n "$sk" ] || continue
+  sn=$(printf '%s' "${sk%%:*}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  found= i=0 n=$(sb_count "$SB_CFG" red.lanes)
+  while [ "$i" -lt "$n" ]; do
+    [ "$(sb_get "$SB_CFG" "red.lanes.$i.name")" = "$sn" ] && found=1
+    i=$((i + 1))
+  done
+  [ -n "$found" ] || refuse "--skipped names no lane called \"$sn\" under red.lanes in .claude/serial-build.json; nothing was done"
+  skipnames="$skipnames${skipnames:+, }$sn"
+done <<EOF
+$skipped
+EOF
 
 void() { # void REASON
   _why=$(printf '%s\n' "$1" | awk 'NR == 1 { f = $0 } NR == 2 { print; done = 1; exit } END { if (!done) print f }' | sed 's/^red-[a-z]*: //; s/\.$//')
@@ -222,6 +246,10 @@ lanes=$(printf '%s' "$outputs" | grep -c .)
 {
   printf '# Source: the red-breaker agent'"'"'s output for %s, %s\n\n' "$gate" "$today"
   printf 'The red lane'"'"'s raw output, unedited, from %s agent(s) in one run. The "## Red" section of the plan for %s cites it.\n' "$lanes" "$gate"
+  if [ -n "$skipnames" ]; then
+    printf '\nLanes this run did not brief, and why:\n'
+    printf '%s' "$skipped" | while IFS= read -r sk; do [ -n "$sk" ] && printf -- '- %s\n' "$sk"; done
+  fi
   n=0
   while IFS= read -r o; do
     [ -n "$o" ] || continue
@@ -240,6 +268,7 @@ na=$(grep -c . "$out.att")
 {
   if [ -s "$voids" ]; then cat "$voids"; echo; fi
   printf 'Red run: %s, %s attempts, %s findings. Source: `%s`.%s' "$today" "$((nf + na))" "$nf" "$src" "$runkind"
+  [ -n "$skipnames" ] && printf ' Lanes skipped: %s.' "$skipnames"
   [ -n "$cost" ] && printf ' Cost: %s.' "$cost"
   printf '\n\n'
   if [ "$nf" -gt 0 ]; then cat "$out.find"; echo; fi
@@ -267,7 +296,7 @@ if [ -n "$kinds" ]; then
 fi
 intake=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "I" { print "  - " $2 }')
 if [ -n "$intake" ]; then
-  printf '\nred-file: these are for /serial-build:intake, not the plan (message wording, or outside this gate):\n%s\n' "$intake"
+  printf '\nred-file: these are for /serial-build:intake, not the plan (message wording, a setup outside the threat model, or outside this gate):\n%s\n' "$intake"
 fi
 if [ -n "$runkind" ] && [ "$runkind" = " Delta run." ] && [ "$nf" -gt 0 ]; then
   # The run before handoff after a partial run is marked a delta run but is not
@@ -279,7 +308,7 @@ if [ -n "$runkind" ] && [ "$runkind" = " Delta run." ] && [ "$nf" -gt 0 ]; then
       if ($0 !~ / 0 findings\./ && !afterpartial) n++
       afterpartial = 0 } END { print n + 0 }' "$plan")
   if [ "$deltas" -ge 2 ]; then
-    printf '\nred-file: STOP. This is the second delta run with findings. Another round would patch the next neighbour; ask the owner whether the gate'"'"'s scope or the fix approach is wrong before any more fixing.\n'
+    printf '\nred-file: STOP. This is the second delta run with findings. Another round would patch the next neighbour, so do not fix again: put the owner one line, a structural change that removes the whole class (a narrower gate, or refusing the class outright), or accepting the risk (each open finding demoted on their words, and filed through intake).\n'
   fi
 fi
 printf '\nred-file: read each finding against the raw output (it counts only if it fails for the reason the agent gave), then commit the tests, the source, and the plan.\n'

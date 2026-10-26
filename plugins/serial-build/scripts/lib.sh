@@ -153,6 +153,38 @@ sb_outside_project() {
   return 0
 }
 
+# sb_threat_model VALUE: prints the project's threat model, the doc section that
+# says which actors and setups its checks defend against and which they do not.
+# VALUE is the config's "threat_model": "<path>" (the whole file) or
+# "<path>#<anchor>" (the section under the heading with that anchor, written as
+# GitHub writes one: lowercase, punctuation dropped, spaces as hyphens, up to
+# the next heading of the same or a higher level; fenced code is never read as
+# a heading). The path is relative to SB_ROOT. Status 1, with the reason as the
+# output, when the path is not a file inside the project, the anchor names no
+# heading, or the text is empty.
+sb_threat_model() {
+  _sb_tp=${1%%#*} _sb_ta=
+  case "$1" in *#*) _sb_ta=${1#*#} ;; esac
+  case "$_sb_tp" in
+    ''|/*|*..*) printf '"threat_model" must name a file inside the project, as <path> or <path>#<anchor>: %s\n' "$1"; return 1 ;;
+  esac
+  [ -f "$SB_ROOT/$_sb_tp" ] || { printf '"threat_model" names %s, which does not exist\n' "$_sb_tp"; return 1; }
+  if ! _sb_tt=$(LC_ALL=C awk -v a="$_sb_ta" '
+      function slug(s) { s = tolower(s); gsub(/[^a-z0-9 _-]/, "", s); gsub(/ /, "-", s); return s }
+      /^(```|~~~)/ { fence = !fence }
+      !fence && /^#+[ \t]/ {
+        lvl = match($0, /[^#]/) - 1
+        if (on && lvl <= level) exit
+        if (!on && a != "") { t = $0; sub(/^#+[ \t]+/, "", t); sub(/[ \t#]+$/, "", t); if (slug(t) == tolower(a)) { on = 1; level = lvl; next } }
+      }
+      a == "" || on { print }
+      END { if (a != "" && !on) exit 2 }' "$SB_ROOT/$_sb_tp"); then
+    printf '"threat_model" names the heading #%s, and %s has no heading with that anchor\n' "$_sb_ta" "$_sb_tp"; return 1
+  fi
+  printf '%s\n' "$_sb_tt" | grep -q '[^[:space:]]' || { printf '"threat_model" names %s, which is empty\n' "$1"; return 1; }
+  printf '%s\n' "$_sb_tt" | sed '/[^[:space:]]/,$!d'
+}
+
 # sb_hash: a short checksum of stdin.
 sb_hash() {
   cksum | awk '{print $1 "-" $2}'

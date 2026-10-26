@@ -117,7 +117,9 @@ Create a scratch folder with `mktemp -d` and write two files there, not in the p
   break line lists what the red lane must attempt.
 - `serial-build.json`: the hook config, per `${CLAUDE_PLUGIN_ROOT}/skills/scope/references/config.md`.
   Include `owner.name`, `inbox`, the generated files, the on-edit and on-stop checks for the hooks
-  the owner turned on, and `red.test_paths`.
+  the owner turned on, and `red.test_paths`. Add `threat_model` only when the repository already
+  has a section saying which actors and setups its checks defend against; never point it at a
+  section that does not exist yet, since red-brief.sh refuses until it can read one.
 
 Then run the dry run:
 

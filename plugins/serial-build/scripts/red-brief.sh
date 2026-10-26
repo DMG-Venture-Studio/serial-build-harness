@@ -6,7 +6,10 @@
 # one red-file.sh reads.
 #
 # The brief holds: the instruction that the agent did not build the gate; the
-# gate's acceptance sentence, Proof, and roadmap section; the attack order (the
+# gate's acceptance sentence, Proof, and roadmap section; what counts as a
+# finding (the project's threat model, the "threat_model" section copied in,
+# or, with none declared, the setups any reviewer would call contrived); the
+# attack order (the
 # surface the demo and acceptance sentence depend on first, the plan's Supporting
 # items after); the "Tried to break" minimum; the run's mode (full, delta, or
 # partial) and lane; the test paths and single-file test command; the path of the
@@ -49,6 +52,12 @@ plan=docs/plan.md
 [ -f "$plan" ] || refuse "no docs/plan.md, so no gate to brief"
 gate=$(awk '/^# /{print substr($0, 3); exit}' "$plan")
 [ "$(sb_count "$SB_CFG" red.test_paths)" -gt 0 ] || refuse "no red.test_paths in .claude/serial-build.json"
+# The threat model, read before anything is written, so a broken one writes nothing.
+tmv=$(sb_get "$SB_CFG" threat_model) || tmv=
+tmt=
+if [ -n "$tmv" ]; then
+  tmt=$(sb_threat_model "$tmv") || refuse "$tmt; fix .claude/serial-build.json or that doc (check-config.sh says the same)"
+fi
 lanekey= first=
 if [ -n "$lane" ]; then
   i=0 n=$(sb_count "$SB_CFG" red.lanes)
@@ -90,6 +99,15 @@ form=$(awk '/^## Output/ { on = 1; next } on && /^```/ { fence = !fence } on && 
   printf 'Acceptance: %s\n\n' "${acceptance:-(the plan states none)}"
   if [ -n "$section" ]; then printf 'From the roadmap:\n\n%s\n\n' "$section"; fi
   if [ -n "$proof" ]; then printf 'Proof (the commands that must pass for it to ship):\n\n%s\n\n' "$proof"; fi
+  echo "## What counts as a finding"
+  echo
+  if [ -n "$tmt" ]; then
+    printf 'A failure counts only if it can happen in a setup this project'"'"'s checks defend against. Its threat model, `%s`, says which, copied here:\n\n%s\n\n' "$tmv" "$tmt"
+    echo "A failure that needs a setup the threat model excludes, or one it does not name that you would yourself call contrived, is not a finding: write no test for it, and list it under \"## For intake\" with the setup it needs. It is never filed as a red finding."
+  else
+    echo "This project declares no threat model. A failure that needs a setup you would yourself call contrived (non-default git config, hand-built git objects, a filesystem nobody here uses, an interpreter build missing standard modules, a commit that skipped the hooks) is not a finding: write no test for it, and list it under \"## For intake\" with the setup it needs. It is never filed as a red finding."
+  fi
+  echo
   echo "## Attack order"
   echo
   echo "1. The acceptance sentence's surface first: everything the demo and the acceptance sentence depend on, taken literally. Look for a case where the sentence is false while every check passes."
