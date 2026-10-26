@@ -1003,7 +1003,8 @@ expect "without the marker, the stop check tests the planted tree and fails (the
 git -C "$pr" checkout -q -- src/app.py
 export SB_TEST_GO="$WORK/go"
 rm -f "$SB_TEST_GO"
-(cd "$pr" && "$SHELL_UNDER_TEST" "$S/run-proofs.sh") > "$WORK/bg.out" 2>&1 &
+# exec, so $! is the script's pid: bash 3.2 (macOS's sh) forks it from the subshell otherwise.
+(cd "$pr" && exec "$SHELL_UNDER_TEST" "$S/run-proofs.sh") > "$WORK/bg.out" 2>&1 &
 bg=$!
 i=0; while ! grep -q PLANTED "$pr/src/app.py" && [ "$i" -lt 50 ]; do sleep 1; i=$((i + 1)); done
 stop_in
