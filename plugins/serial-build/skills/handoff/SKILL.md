@@ -13,9 +13,15 @@ handoff file. The product owner is `owner.name` in `.claude/serial-build.json`.
 
 ## 1. Audit every proof
 
-Read `docs/done.md`. For every entry, run each command under `Proof:` exactly as written, from the
-project root; a `Manual:` entry is reported as "manual, not re-run". Report every result. A proof
-that fails moves its gate back to the top of the roadmap as a regression gate. `docs/done.md`
+Run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/run-proofs.sh"` from the project root and quote its output.
+It runs every command under `Proof:` in `docs/done.md` exactly as written, and reports a `Manual:`
+entry as "manual, not re-run". Never run the proofs one by one instead: the script holds a marker
+while it runs, so the end-of-turn stop check does not test a tree a proof has half-changed on
+purpose (a planted-violation proof undoes its change only at its end). If it may outlast the
+tool's timeout, run it in the background and wait for it; it exits 3 while another proof run is
+live. A proof it says left the tree changed is a broken proof: undo what it left and file the fix
+through `/serial-build:intake`. A proof that fails moves its gate back to the top of the roadmap as
+a regression gate. `docs/done.md`
 is never hand-edited (a hook refuses it); run
 `sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --regress <gate-slug> --failed "<the failing output>"`.
 Nothing stays in done on faith.

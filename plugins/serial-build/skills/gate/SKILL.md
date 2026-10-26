@@ -126,7 +126,10 @@ facts. The demo cannot run while the red lane runs: the dev stack writes ignored
 guard watches, which would void the run. Every QA
 line in the gate becomes a task and a command in the Proof block, because the ship-gate script
 runs those commands before the gate can ship and `docs/done.md` re-runs them at every handoff.
-Use `Manual:` followed by the steps only for what no command can show.
+Use `Manual:` followed by the steps only for what no command can show. A proof command that changes the tree on
+purpose (a planted-violation check) undoes the change before it exits, pass or fail (a `trap` on
+exit), so a later command and the end-of-turn stop check see the tree as it was; the handoff's
+proof run names one that does not.
 
 ## 4. Adversarial review, on every draft
 
