@@ -967,6 +967,73 @@ expect "verify reads test paths relative to the subproject" 0 "tests/red_x.sh"
 hook "$mono/app" red-fence.sh "$(red_input Write "\"file_path\":\"$WORK/mwt/app/tests/test_red.py\"")"; silent "the fence maps the worktree to the subproject"
 
 # ---------------------------------------------------------------- configs
+echo "-- run-proofs: the stop hook waits while a proof has the tree half-changed (issue 10)"
+check "ship-gate left no proof marker behind, even where it refused (issue 10)" '! ls "$proj"/.git/serial-build/proofs-* >/dev/null 2>&1' "$(ls "$proj"/.git/serial-build)"
+pr="$WORK/proofs"
+mkdir -p "$pr/.claude" "$pr/src" "$pr/tests" "$pr/docs"
+cp "$FIX/serial-build.json" "$pr/.claude/serial-build.json"
+echo 'x = 1' > "$pr/src/app.py"
+printf '! grep -q PLANTED src/app.py\n' > "$pr/tests/check.sh"
+# A planted-violation proof: plants, waits (the turns it spans), checks the plant is caught, undoes it.
+cat > "$pr/tests/plant.sh" <<'EOF'
+cp src/app.py "$TMPDIR/app.keep"
+trap 'cp "$TMPDIR/app.keep" src/app.py' EXIT
+echo PLANTED >> src/app.py
+i=0; while [ ! -f "$SB_TEST_GO" ] && [ "$i" -lt 30 ]; do sleep 1; i=$((i + 1)); done
+! sh tests/check.sh
+EOF
+printf '# Done\n\n## plant-gate\n\nDate: 2026-10-26\n\nProof:\n\n    sh tests/plant.sh\n    sh tests/check.sh\n\nAccepted: "ok"\n\n## look-gate\n\nDate: 2026-10-26\n\nManual: open it and look.\n\nAccepted: "ok"\n' > "$pr/docs/done.md"
+(cd "$pr" && git init -q && git add -A && git commit -qm init)
+stop_in() { hook "$pr" stop-checks.sh '{"session_id":"s1","stop_hook_active":false}'; }
+echo PLANTED >> "$pr/src/app.py"
+stop_in
+expect "without the marker, the stop check tests the planted tree and fails (the issue)" 2 "tests failed"
+git -C "$pr" checkout -q -- src/app.py
+export SB_TEST_GO="$WORK/go"
+rm -f "$SB_TEST_GO"
+(cd "$pr" && "$SHELL_UNDER_TEST" "$S/run-proofs.sh") > "$WORK/bg.out" 2>&1 &
+bg=$!
+i=0; while ! grep -q PLANTED "$pr/src/app.py" && [ "$i" -lt 50 ]; do sleep 1; i=$((i + 1)); done
+stop_in
+expect "while the proof run holds the marker, the stop check runs nothing on the planted tree" 0 "proofs are running (pid $bg)"
+hook "$pr" session-start.sh '{"session_id":"s9","source":"startup"}'
+expect "a session started meanwhile is told proofs are running" 0 "proofs are running (pid $bg)"
+script "$pr" run-proofs.sh
+expect "a second proof run refuses while one is live" 3 "another proof run (pid $bg) is live"
+: > "$SB_TEST_GO"
+wait "$bg"; bgcode=$?
+bgout=$(cat "$WORK/bg.out")
+check "the run passes, reports every proof and the manual entry, and undid the plant" '[ "$bgcode" = 0 ] && printf "%s" "$bgout" | grep -qx "pass: plant-gate: sh tests/plant.sh" && printf "%s" "$bgout" | grep -qx "pass: plant-gate: sh tests/check.sh" && printf "%s" "$bgout" | grep -qx "manual, not re-run: look-gate" && ! printf "%s" "$bgout" | grep -q "left the tree changed" && [ -z "$(git -C "$pr" status --porcelain)" ]' "exit $bgcode: $bgout"
+check "the marker is released when the run ends" '! ls "$pr"/.git/serial-build/proofs-* >/dev/null 2>&1'
+stop_in; silent "and the stop check is back to normal"
+check "nothing stale reached the next session" '! printf "%s" "$(CLAUDE_PROJECT_DIR=$pr sh $H/session-start.sh </dev/null)" | grep -q "proof run"'
+
+echo "-- run-proofs: a marker a dead run left behind never silences the stop check"
+marker=$(cd "$pr" && SB_ROOT=$(pwd) && SB_PLUGIN=$P && . "$S/lib.sh" && sb_proof_marker)
+sh -c 'exit 0' & dead=$!; wait "$dead"
+printf '%s run-proofs.sh\n' "$dead" > "$marker"
+echo 'PLANTED, left by the dead run' >> "$pr/src/app.py"
+stop_in
+expect "a dead run's marker: the stop check runs, fails, and says the change may be the proof's" 2 "proof run (pid $dead) died without finishing"
+hook "$pr" session-start.sh '{"session_id":"s9","source":"startup"}'
+expect "the next session is told to check git status and clear it" 0 "run-proofs.sh\" --clear"
+printf '%s run-proofs.sh\n' "$$" > "$marker"
+hook "$pr" session-start.sh '{"session_id":"s9","source":"startup"}'
+expect "a live pid that is not the run that took it (reused) is stale too" 0 "proof run (pid $$) died"
+script "$pr" run-proofs.sh --clear
+expect "--clear removes a stale marker" 0 "cleared the marker"
+check "and it is gone" '[ ! -f "$marker" ]'
+git -C "$pr" checkout -q -- src/app.py
+
+echo "-- run-proofs: a failing proof, and a proof that leaves the tree changed"
+printf '# Done\n\n## leaky-gate\n\nDate: 2026-10-26\n\nProof:\n\n    echo y >> src/app.py\n\nAccepted: "ok"\n\n## red-gate\n\nDate: 2026-10-26\n\nProof:\n\n    echo it broke; exit 1\n    cat > /dev/null; true\n\nAccepted: "ok"\n' > "$pr/docs/done.md"
+script "$pr" run-proofs.sh
+expect "a failing proof fails the run and names the --regress command" 1 "ship-gate.sh --regress red-gate"
+check "it shows the failing output, names the leaky proof, and a proof reading stdin does not eat the next command" 'printf "%s" "$out" | grep -qx "    it broke" && printf "%s" "$out" | grep -q "left the tree changed: src/app.py" && printf "%s" "$out" | grep -qx "pass: red-gate: cat > /dev/null; true" && ! printf "%s" "$out" | grep -q "regress leaky-gate"' "$out"
+check "the marker is released after a failing run too" '[ ! -f "$marker" ]'
+check "the handoff runs proofs through the script, never one by one (issue 10)" 'grep -q "scripts/run-proofs.sh" "$P/skills/handoff/SKILL.md" && grep -q "Never run the proofs one by one" "$P/skills/handoff/SKILL.md" && grep -q "undoes the change before it exits" "$P/skills/gate/SKILL.md"'
+unset SB_TEST_GO
+
 echo "-- broken and switched-off configs"
 cp "$proj/.claude/serial-build.json" "$WORK/good.json"
 printf '{"version": 1, "owner": ' > "$proj/.claude/serial-build.json"

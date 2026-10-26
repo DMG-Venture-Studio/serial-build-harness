@@ -45,6 +45,10 @@ state=$(sb_state_dir)
 if lock=$(sb_red_lock) && [ -f "$lock" ]; then
   printf 'serial-build: the red lock is held: a red run is in progress, or a session died holding it. Until it is released only the red-breaker agent may write into the project. If no red run is in progress, release it (this voids that run) with: sh "%s/scripts/red-guard.sh" abort\n' "$SB_PLUGIN"
 fi
+pid=$(sb_proof_running); case $? in
+  0) printf 'serial-build: proofs are running (pid %s), and the stop checks wait until they finish.\n' "$pid" ;;
+  2) printf 'serial-build: a proof run (pid %s) died before it finished, so a proof that changes the tree on purpose may have left its change in it. Check git status and undo what the proof changed, then clear its marker with: sh "%s/scripts/run-proofs.sh" --clear\n' "$pid" "$SB_PLUGIN" ;;
+esac
 for why in "$state"/stop-*.why; do
   [ -f "$why" ] || continue
   stamp=${why%.why}

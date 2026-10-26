@@ -47,6 +47,12 @@ plan=docs/plan.md done=docs/done.md roadmap=docs/roadmap.md
 today=$(date +%Y-%m-%d)
 TAB=$(printf '\t')
 refuse() { printf 'ship-gate: %s\n' "$1" >&2; exit 1; }
+# hold_proofs: takes the proof marker, so the stop hook waits while a proof may
+# have the tree half-changed; sb_proof_release gives it back once they have run.
+hold_proofs() {
+  sb_proof_hold ship-gate.sh || refuse "a proof run (pid $(sb_proof_running)) is live; let it finish first"
+  trap 'sb_proof_release; exit 130' INT TERM HUP
+}
 
 # remove_section FILE HEADING_PREFIX SLUG: drops the "<prefix> <slug>" section, up
 # to the next heading of the same or a higher level or a stage's "Later:" list,
@@ -174,9 +180,12 @@ if [ "${1:-}" = --retire-proof ]; then
     done
     set +f
   fi
-  if ! (sh -c "$cmd") > /dev/null 2>&1; then
+  hold_proofs
+  if ! (sh -c "$cmd") > /dev/null 2>&1 < /dev/null; then
+    sb_proof_release
     refuse "\"$cmd\" fails now, so $slug has regressed; a failing proof is never retired. Move the gate back with: ship-gate.sh --regress $slug --failed \"<the failing output>\""
   fi
+  sb_proof_release
   newf=$(mktemp "${TMPDIR:-/tmp}/sb-retire.XXXXXX") || exit 1
   trap 'rm -f "$newf" "$done.sb-tmp"' EXIT
   printf '%s\n' "$entry" | CMD=$cmd SAID=$said awk -v add="Retired: \`$cmd\` from the proof. See \`$dec\`. The owner said: " '
@@ -228,10 +237,11 @@ repro=$(rows FIND | awk -F '\t' '{ c[$3] = $5; if (!($3 in seen)) { seen[$3] = 1
 all=$(printf '%s\n%s\n' "$proofs" "$repro" | sed '/^$/d; /^-$/d')
 out=$(mktemp "${TMPDIR:-/tmp}/sb-ship.XXXXXX") || exit 1
 entryf=$(mktemp "${TMPDIR:-/tmp}/sb-entry.XXXXXX") || exit 1
-trap 'rm -f "$out" "$entryf"' EXIT
+trap 'sb_proof_release; rm -f "$out" "$entryf"' EXIT
 if [ -n "$all" ]; then
+  hold_proofs
   while IFS= read -r cmd; do
-    if ! (sh -c "$cmd") > "$out" 2>&1; then
+    if ! (sh -c "$cmd") > "$out" 2>&1 < /dev/null; then
       tail -n 20 "$out" >&2
       refuse "a proof fails now, so $slug does not ship: $cmd"
     fi
@@ -239,6 +249,7 @@ if [ -n "$all" ]; then
   done <<EOF
 $all
 EOF
+  sb_proof_release
 fi
 
 attempts=$(rows RUN | awk -F '\t' '{ t += $3 } END { print t + 0 }')
