@@ -19,7 +19,7 @@ if ! cfg=$(sb_flatten < "$file" 2>&1); then
   exit 1
 fi
 
-known="version enabled owner inbox generated checks red"
+known="version enabled owner inbox generated checks red threat_model"
 for key in $(printf '%s\n' "$cfg" | cut -f 1 | cut -d . -f 1 | sort -u); do
   case " $known " in *" $key "*) ;; *) warn "unknown key \"$key\" is ignored" ;; esac
 done
@@ -38,6 +38,22 @@ if [ -n "$inbox" ]; then
   say "inbox: $inbox/ is listed at session start, and a session that touched it cannot stop while it holds items"
 else
   say "inbox: off"
+fi
+
+# The threat model: which actors and setups the checks defend against. No hook
+# reads it, but red-brief.sh refuses while it names nothing it can read, and the
+# reviewing agents score findings against it.
+SB_ROOT=$(sb_project_root)
+if printf '%s\n' "$cfg" | cut -f 1 | grep -q '^threat_model\.'; then
+  err "\"threat_model\" must be a string, \"<path>\" or \"<path>#<anchor>\", naming the section that says which actors and setups the checks defend against"
+elif tm=$(sb_get "$cfg" threat_model) && [ -n "$tm" ]; then
+  if why=$(sb_threat_model "$tm"); then
+    say "threat model: $tm; the adversarial reviewer, the red-breaker and the red-fixer read it, and every red brief carries it: a finding that needs a setup outside it is listed for intake, unscored, never folded or filed"
+  else
+    err "$why; red-brief.sh refuses until it names a section it can read"
+  fi
+else
+  say "threat model: none declared (\"threat_model\"); reviewers and red-breakers judge for themselves which setups are contrived"
 fi
 
 n=$(sb_count "$cfg" generated)

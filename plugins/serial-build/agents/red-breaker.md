@@ -43,6 +43,17 @@ cover only the scenario they wrote them for, and go after everything else.
   under the test paths.
 - Do not weaken or delete an existing test to make a point.
 
+## What counts as a finding
+
+A failure counts only when it can happen in a setup the project's checks defend against. When
+`.claude/serial-build.json` has `threat_model` (`<path>` or `<path>#<anchor>`), that section says
+which actors and setups count and which do not; your brief carries a copy. A failure that needs a
+setup it excludes, or, with none declared, one you would yourself call contrived (non-default git
+config, hand-built git objects, a filesystem nobody here uses, an interpreter build missing
+standard modules, a commit that skipped the hooks), is not a finding. Write no test for it, list
+it under "For intake" naming the setup it needs, and move on: it is never filed as a red finding,
+and a test for it would be refused at filing.
+
 ## How to attack
 
 Work through the "Tried to break" list you were given first, then go beyond it:
@@ -55,7 +66,7 @@ Work through the "Tried to break" list you were given first, then go beyond it:
 3. **Order and repetition**: the same step twice, steps out of order, an interrupted step, a
    retry after a failure.
 4. **Environment**: a missing file or dependency, no network, a read-only folder, a clock at an
-   edge, a concurrent run.
+   edge, a concurrent run, each within the setups the project counts.
 5. **The claim itself**: read the acceptance sentence literally and look for a case where it is
    false while every check passes.
 
@@ -103,7 +114,7 @@ one kind, so the builder fixes each kind once.
   Seen: <the failing output's key line>.
 
 ## For intake
-- <a finding only about a message's wording, or anything outside this gate>.
+- <a finding only about a message's wording, one that needs a setup outside the threat model (name the setup), or anything outside this gate>.
 
 ## Attempts that found nothing
 - <attack>: <what you ran>, <what happened>.

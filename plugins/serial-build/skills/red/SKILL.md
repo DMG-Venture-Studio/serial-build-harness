@@ -39,6 +39,11 @@ and tell the owner: "next: `/clear`, then `/serial-build:red`".
 
 - `.claude/serial-build.json` has `red.test_paths`, which tells a test from the code under test.
   Check with `sh "${CLAUDE_PLUGIN_ROOT}/scripts/check-config.sh"`; without it, stop and say so.
+- When it has `threat_model` (the section saying which actors and setups the project's checks
+  defend against), check-config.sh must read it without an ERROR: red-brief.sh copies it into
+  every brief and refuses while it names nothing it can read. A failure that needs a setup it
+  excludes comes back under "For intake", never as a finding, so the red rounds are spent on what
+  can actually happen. With none declared, every brief still sends contrived setups to intake.
 - `docs/plan.md` exists and names the gate. The red lane attacks the active gate only.
 - The gate's work is committed. The breaker works in a worktree cut from the last commit, so
   uncommitted work would go unattacked; the snapshot below refuses until it is committed.
@@ -104,6 +109,17 @@ are the first lane's alone, and to name its test files `red_<lane>_<what>` (a co
 run). When all lanes return, file them as one run: `red-file.sh` with one `--output` per lane and
 one `--worktree` per worktree named. A delta run uses one breaker.
 
+**A run may brief only some lanes.** Standing rule: skip a lane whose `paths` are only check
+tooling (the project's own checks, hooks, and CI scripts, not product code) when the gate's last
+pre-push adversarial report on those paths, where the project runs one, ended in an approving
+verdict ("Approve as is" or "Fold and approve"). A breaker there would attack code a reviewer has
+just approved: in the source project one breaker run cost 150k to 230k tokens and 20 to 25
+minutes, and the fix rounds it started cost more. Never skip the first lane by this rule, since
+it holds every subprocess and timing attack; any other skip is the owner's call. Each lane that
+runs still meets the whole "Tried to break" list. File the run with one
+`--skipped "<lane>: <why>"` per lane not briefed, naming the report, so the record says which
+lanes ran and why the others did not.
+
 A hook fences the breaker while it runs (writes outside the test paths and git commands other than
 read-only ones are refused), but the fence is advisory; the checks in step 5 are the guarantee.
 
@@ -131,10 +147,13 @@ sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-file.sh" --output <response file> [--workt
 - `--cost` is the duration and token count the harness reported for the agent, so the done entry
   states what the red lane really cost.
 - `--delta` for a delta run, `--partial` for a partial run, so the run line says which.
+- `--skipped "<lane>: <why>"` for each lane of `red.lanes` this run did not brief (step 3); the
+  run line names it and the filed source says why. Fewer outputs than lanes is otherwise fine.
 
 Besides the drafted section it prints the findings' kinds (fix each once), anything the agent put
-under "For intake" (file those through `/serial-build:intake`, never into the plan), and, on the
-second delta run with findings, a STOP line (see step 9).
+under "For intake" (message wording, a setup outside the threat model, or anything outside the
+gate: file those through `/serial-build:intake`, never into the plan), and, on the second delta
+run with findings, a STOP line (see step 9).
 
 It does, in order, and stops at the first that fails:
 
@@ -188,7 +207,7 @@ makes:
 
 Voided red run: <YYYY-MM-DD>, <cost>. Why: <what changed>.
 
-Red run: <YYYY-MM-DD>, <n> attempts, <n> findings. Source: `red-<gate-slug>-<YYYY-MM-DD>`.[ Delta run.| Partial run.] Cost: <duration>, <tokens>.
+Red run: <YYYY-MM-DD>, <n> attempts, <n> findings. Source: `red-<gate-slug>-<YYYY-MM-DD>`.[ Delta run.| Partial run.][ Lanes skipped: <lane>.] Cost: <duration>, <tokens>.
 
 - red-<slug>: <what breaks, consequence first>. Kind: `<class>`. Test: `<test file path>@<git blob hash>`. Reproduce: `<command>`.
 
@@ -241,8 +260,12 @@ holding only file paths and verdicts, never the code, and every agent it launche
    Its declared attempts may be fewer than the "Tried to break" list, whose minimum the first run
    met.
 4. **Repeat** from 1 while the delta run finds something, with one limit: when red-file.sh prints
-   STOP (the second delta run with findings), do not fix again. Ask the owner whether the gate's
-   scope or the fix approach is wrong; a third round patches the next neighbour.
+   STOP (the second delta run with findings), do not fix again; a third round patches the next
+   neighbour. Put the owner one line: a structural change that removes the whole class (a
+   narrower gate, or refusing the class outright), or accepting the risk (each open finding
+   demoted on their words, below, and filed through `/serial-build:intake`). This is the same
+   stopping rule the project's process rules set for adversarial rounds on check code: two fold
+   rounds, then the owner's one-line choice, never a third fold.
 
 Stop and ask the owner only for: a finding that may be wrong (the demote question), the STOP
 above, or a clean run, when the loop ends and step 10 names the next command.

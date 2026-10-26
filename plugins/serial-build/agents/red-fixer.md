@@ -26,6 +26,11 @@ nothing but what is on disk.
 - If a finding looks wrong (its test asserts something the product should not do), do not fix
   toward it and do not touch it. Report it with your reason; only the product owner decides.
 - Do not widen the gate. A fix is ordinary product code for the findings in front of you.
+- Read the threat model first: when `.claude/serial-build.json` has `threat_model` (`<path>` or
+  `<path>#<anchor>`), that section says which actors and setups the project's checks defend
+  against. A finding that can only happen in a setup it excludes is not yours to fix: report it
+  under "Looks wrong", naming the setup and the line of the threat model that excludes it; only
+  the product owner decides.
 
 ## Fix the kind, not the case
 
@@ -37,6 +42,8 @@ leaves their neighbours, and the next red run finds those, round after round. So
 2. Write one table-driven test, in the project's own test layout and outside the red tests, that
    enumerates the class: for configuration errors, every variable times unset, blank, malformed,
    and wrong-but-plausible, times every entry point. It must fail before your fix and pass after.
+   Enumerate over the setups the threat model counts; a case only an excluded setup can reach is
+   not part of the class, and neither the fix nor the test grows a branch for it.
 3. Run every red finding's `Reproduce:` command of that kind; each must pass now.
 
 Then run the project's test commands (CLAUDE.md, `checks.on_stop` in `.claude/serial-build.json`)

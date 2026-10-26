@@ -105,6 +105,11 @@ New open questions (written to docs/open.md on approval):
 - <slug>: <the question, why it matters, a recommendation> | none
 ```
 
+Every attack on the "Tried to break" list is one that can happen in a setup the project counts:
+when `.claude/serial-build.json` has `threat_model`, read that section, and leave off any attack
+that needs a setup it excludes. The red lane must attempt every listed attack, so an out-of-model
+one buys a run that can only end in an intake item.
+
 Tasks only. Plan mode cannot write files, so a design question that comes up is drafted in the
 "New open questions" list (what it is, why it matters, a recommendation) and referenced from the
 task by its slug instead of being resolved inline; step 5 writes it to `docs/open.md`.
@@ -149,10 +154,17 @@ attacks the acceptance sentence's surface first and the Supporting items after. 
 none of nineteen red findings were against the acceptance sentence: all were in tooling the plan
 had bundled with it, and the red rounds went there.
 
-Fold in every accepted finding. Then review again with the prior findings listed as already
-folded, so the second pass hunts for new ones. Stop after a pass with no major finding (+5), or
-after three passes, and say which in one line at the end of the draft. A design choice the
-reviewer flags as the owner's to make becomes an open-question slug, not a hedge in the plan.
+Fold in every accepted finding; the reviewer lists findings that need a setup outside the
+project's threat model unscored, under "For intake", and those are never folded (they go to
+`/serial-build:intake` after approval). Then review again with the prior findings listed as
+already folded, so the second pass hunts for new ones. Stop after a pass with no major finding
+(+5), after a second or later pass whose verdict is "Approve as is" or "Fold and approve" (fold
+it; that fold needs no new review), or after three passes, and say which in one line at the end
+of the draft. A third pass's finding in the same area as an earlier pass's is not folded: it
+reaches the owner in step 5 as one line, a structural change that removes the whole class or
+accepting the risk, the same stopping rule the project's process rules set for check code. A
+design choice the reviewer flags as the owner's to make becomes an open-question slug, not a
+hedge in the plan.
 
 ## 5. Approve and write
 

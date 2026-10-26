@@ -36,7 +36,19 @@ whenever something new turns up.
 - `/serial-build:intake <finding>` slots a finding, idea, bug, or brief into the docs. Never edit
   the plan or the standing docs ad hoc.
 - `/serial-build:red` sends a fresh agent to break the active gate. Its only outputs are a failing
-  test or "nothing found" with every attempt listed. It never edits the fix.
+  test or "nothing found" with every attempt listed. It never edits the fix. A run may brief only
+  some lanes: a lane whose paths are only check tooling is skipped when the gate's last pre-push
+  adversarial report on those paths approved, and the run's record names the skip.
+- Findings count only inside the threat model. When `.claude/serial-build.json` names a
+  `threat_model` section (which actors and setups the checks defend against, and which they do
+  not), a reviewer's or red-breaker's finding that needs a setup outside it is listed unscored
+  for intake: never folded, never filed as a red finding. With none named, the same holds for a
+  setup the reviewer itself calls contrived (non-default git config, hand-built git objects).
+- At most two adversarial rounds on the same check code per gate (the project's own checks,
+  hooks, and CI), because each fold of a check opens the next edge for the round after it. A
+  finding in the same area in a third round goes to {{owner_name}} as a one-line choice between
+  a structural change that refuses the whole class and accepting the risk, never a third fold.
+  A "Fold and approve" verdict ends a round: the fold needs no new review.
 - `/serial-build:demo-brief` writes {{owner_name}}'s instructions for a gate's demo, including the
   step where {{owner_name}} tries to break it, from the project's data rather than memory.
 - `/serial-build:handoff` re-runs every proof in `docs/done.md` and ships an accepted gate through

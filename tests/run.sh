@@ -650,6 +650,27 @@ check "a slug two lanes both used is made unique, and the source holds both lane
 git -C "$rf" reset -q --hard HEAD && git -C "$rf" clean -qfd -- tests docs
 script "$rf" red-guard.sh abort
 
+echo "-- a run that briefs only some lanes is filed, naming the lanes it skipped"
+rs="$WORK/rs"
+cp -R "$rf" "$rs"
+sed 's|"red": { "test_paths": \["tests/\*\*"\] }|"red": { "test_paths": ["tests/**"], "lanes": [ { "name": "core", "focus": "the parser" }, { "name": "tools", "focus": "the check scripts", "paths": ["tools/**"] } ] }|' "$rs/.claude/serial-build.json" > "$WORK/cfg" && cp "$WORK/cfg" "$rs/.claude/serial-build.json"
+commit "$rs" "two lanes"
+script "$rs" red-guard.sh snapshot
+ws="$rs/.claude/worktrees/agent-s"
+git -C "$rs" worktree add -q --detach "$ws" HEAD
+printf 'grep -q core_fixed src/tally/core.py\n' > "$ws/tests/red_core_s.sh"
+printf '## Findings\n- red-core-only: the core lane breaks it.\n  Test: tests/red_core_s.sh. Reproduce: `sh tests/red_core_s.sh`.\n\n## Attempts that found nothing\n- a: nothing.\n' > "$WORK/s1.md"
+script "$rs" red-file.sh --output "$WORK/s1.md" --worktree "$ws" --skipped "tools"
+expect "--skipped needs the reason as well as the lane" 1 "<lane>: <why>"
+script "$rs" red-file.sh --output "$WORK/s1.md" --worktree "$ws" --skipped "nope: a typo"
+expect "--skipped refuses a lane the config does not have" 1 'no lane called "nope"'
+check "and does nothing: the lock is still held and nothing is filed" '[ -f "$(cd "$rs" && SB_ROOT=$(pwd) && SB_PLUGIN=$P && . "$S/lib.sh" && sb_red_lock)" ] && [ -d "$ws" ] && git -C "$rs" diff --quiet -- docs/plan.md'
+script "$rs" red-file.sh --output "$WORK/s1.md" --worktree "$ws" --skipped "tools: its last pre-push review said Fold and approve" --cost "5 min, 0.2M tokens"
+expect "one lane's output, of two configured, is filed as a run" 0 "2 attempts, 1 findings"
+check "the run line names the skipped lane before its cost, and the filed source says why" 'grep -q "^Red run: .* Lanes skipped: tools\. Cost: 5 min, 0.2M tokens\.$" "$rs/docs/plan.md" && grep -q "^- tools: its last pre-push review said Fold and approve" "$rs/docs/decisions/sources/red-rf-gate-$today-2.md"' "$(grep '^Red run' "$rs/docs/plan.md")"
+script "$rs" red-status.sh --record
+expect "a run with a skipped lane is a well-formed record, its cost read whole" 0 "well formed"
+
 echo "-- red-file refuses rather than lose a finding (review of issues 2, 3)"
 rf_reset() { git -C "$rf" reset -q --hard HEAD && git -C "$rf" clean -qfd -- tests docs; for w in "$rf"/.claude/worktrees/*; do [ -e "$w/.git" ] && git -C "$rf" worktree remove --force "$w"; done; script "$rf" red-guard.sh abort; }
 script "$rf" red-guard.sh snapshot
@@ -707,6 +728,18 @@ script "$rf" red-brief.sh --out "$WORK/rb" --delta
 check "a delta brief is regressions only and lists the findings to re-attack (issue 13)" 'grep -q "A delta run: regressions only" "$WORK/rb/brief.md" && grep -q "red-empty-statement" "$WORK/rb/brief.md" && ! grep -q "^## Your minimum" "$WORK/rb/brief.md"'
 script "$rf" red-brief.sh --out "$WORK/rb" --partial "the parser"
 check "a partial brief names the finished slices (issue 14)" 'grep -q "these slices are finished: the parser" "$WORK/rb/brief.md"'
+check "with no threat model declared, every brief still sends contrived setups to intake" 'grep -q "declares no threat model" "$WORK/rb/brief.md" && grep -q "a commit that skipped the hooks" "$WORK/rb/brief.md"'
+mkdir -p "$rf/docs/tech" && printf '# Enforcement\n\n## Threat model\n\nWho counts: Ada, and sessions making honest mistakes.\n\n### What does not count\n\n- hand-built git objects\n\n## Checks\n\nNOT-IN-THE-MODEL\n' > "$rf/docs/tech/enforcement.md"
+cp "$rf/.claude/serial-build.json" "$WORK/cfg.keep"
+sed 's|"version": 1,|"version": 1, "threat_model": "docs/tech/enforcement.md#threat-model",|' "$WORK/cfg.keep" > "$rf/.claude/serial-build.json"
+script "$rf" red-brief.sh --out "$WORK/rbt"
+expect "red-brief reads the declared threat model" 0 "Read $WORK/rbt/brief.md and follow it"
+check "the brief carries the threat model section, only that section, and what to do with a failure outside it" 'grep -q "^Who counts: Ada, and sessions making honest mistakes." "$WORK/rbt/brief.md" && grep -q "^- hand-built git objects" "$WORK/rbt/brief.md" && ! grep -q "NOT-IN-THE-MODEL" "$WORK/rbt/brief.md" && grep -q "docs/tech/enforcement.md#threat-model" "$WORK/rbt/brief.md" && grep -q "is not a finding: write no test for it" "$WORK/rbt/brief.md"' "$(cat "$WORK/rbt/brief.md")"
+sed 's|"version": 1,|"version": 1, "threat_model": "docs/tech/enforcement.md#gone",|' "$WORK/cfg.keep" > "$rf/.claude/serial-build.json"
+script "$rf" red-brief.sh --out "$WORK/rbx"
+expect "red-brief refuses while the threat model names nothing it can read" 1 "no heading with that anchor"
+check "and writes neither the brief nor the pack" '[ ! -e "$WORK/rbx/brief.md" ] && [ ! -e "$WORK/rbx/pack.md" ]'
+cp "$WORK/cfg.keep" "$rf/.claude/serial-build.json" && rm -f "$rf/docs/tech/enforcement.md"
 
 echo "-- red-file never files an unreadable report as clean (issue 17)"
 script "$rf" red-guard.sh snapshot
@@ -1018,6 +1051,23 @@ printf '{"version":1,"owner":{"name":"Ada"},"red":{"test_paths":["tests/**"],"te
 script "$proj" check-config.sh "$WORK/tc.json"
 expect "check-config warns when red.test_command has no {file} (issue 3)" 0 'has no {file}'
 
+echo "-- the threat model: the section saying which setups the checks defend against"
+printf '# Enforcement\n\n## Threat model\n\nWho counts: Ada.\n\n```\n# a comment, not a heading\n```\n\n### What does not count\n\n- hand-built git objects\n\n## Empty\n\n## After\n\nmore\n' > "$proj/docs/tech/enforcement.md"
+tm() { printf '{"version":1,"owner":{"name":"Ada"},"threat_model":%s,"red":{"test_paths":["tests/**"]}}' "$1" > "$WORK/tm.json"; script "$proj" check-config.sh "$WORK/tm.json"; }
+tm '"docs/tech/enforcement.md#threat-model"'
+expect "check-config reads a threat model section by its anchor" 0 "threat model: docs/tech/enforcement.md#threat-model;"
+case "$out" in *unknown*) no "threat_model is a known key" "$out" ;; *) ok "threat_model is a known key" ;; esac
+tm '"docs/tech/enforcement.md"'
+expect "a threat model may be a whole file" 0 "threat model: docs/tech/enforcement.md;"
+for v in '"/etc/hosts"' '"../x.md#a"' '"docs/nope.md"' '"docs/tech/enforcement.md#no-such-heading"' '"docs/tech/enforcement.md#empty"' '{"path":"docs/tech/enforcement.md"}'; do
+  tm "$v"
+  expect "check-config refuses the threat_model $v" 1 '"threat_model"'
+done
+printf '{"version":1,"owner":{"name":"Ada"},"red":{"test_paths":["tests/**"]}}' > "$WORK/tm.json"
+script "$proj" check-config.sh "$WORK/tm.json"
+expect "with none declared, check-config says the agents judge contrived setups themselves" 0 "threat model: none declared"
+rm -f "$proj/docs/tech/enforcement.md"
+
 echo "-- the skills and agents say what the scripts cannot enforce"
 check "/red demotes only on the owner's answer to AskUserQuestion, passed verbatim (third review, item 2)" 'grep -q "Ask the owner with AskUserQuestion" "$P/skills/red/SKILL.md" && grep -q "their answer, verbatim" "$P/skills/red/SKILL.md" && grep -q "never this session on its own judgement" "$P/skills/red/SKILL.md"'
 check "README says the demotion check stops accidents, not a determined forger (third review, item 2)" 'grep -q "not a determined forger" "$REPO/README.md"'
@@ -1033,6 +1083,11 @@ check "gate takes a waiting draft through the delta check (issue 4)" 'grep -q "p
 check "the red skill chains fix and delta runs through fresh agents, stopping on a second delta with findings (issues 13, 15)" 'grep -q "serial-build:red-fixer" "$P/skills/red/SKILL.md" && grep -q "STOP" "$P/skills/red/SKILL.md" && [ -f "$P/agents/red-fixer.md" ] && grep -q "Never edit a red test" "$P/agents/red-fixer.md" && grep -q "table-driven test" "$P/agents/red-fixer.md"'
 check "the red skill allows a partial run while the builder waits outside the repo (issue 14)" 'grep -q "A partial run, earlier" "$P/skills/red/SKILL.md" && grep -q "partial red run" "$P/skills/gate/SKILL.md"'
 check "the gate review asks of every item whether the demo or acceptance needs it (issue 18)" 'grep -q "does the demo or the" "$P/skills/gate/SKILL.md" && grep -q "^Supporting (built here" "$P/skills/gate/SKILL.md"'
+check "the reviewer lists a finding outside the threat model unscored for intake, names attacks on its own advice, and says what Fold and approve means" 'grep -q "^## For intake" "$P/agents/adversarial-reviewer.md" && grep -q "is listed unscored under" "$P/agents/adversarial-reviewer.md" && grep -q "attacks my" "$P/agents/adversarial-reviewer.md" && grep -q "the fold needs no new review" "$P/agents/adversarial-reviewer.md"'
+check "the reviewer, the breaker and the fixer each read the threat model" 'grep -q "threat_model" "$P/agents/adversarial-reviewer.md" && grep -q "threat_model" "$P/agents/red-breaker.md" && grep -q "threat_model" "$P/agents/red-fixer.md"'
+check "the rules template, the red skill and the gate skill carry the two-round stopping rule" 'grep -q "At most two adversarial rounds on the same check code per gate" "$P/skills/scope/templates/dot-claude/rules/serial-build.md.tmpl" && grep -q "never a third fold" "$P/skills/red/SKILL.md" && grep -q "the same stopping rule" "$P/skills/gate/SKILL.md"'
+check "the scaffolded rules carry the threat model and the stopping rule" 'grep -q "Findings count only inside the threat model" "$proj/.claude/rules/serial-build.md" && grep -q "At most two adversarial rounds" "$proj/.claude/rules/serial-build.md"'
+check "the red skill lets a run brief only some lanes, by a standing rule, recorded with --skipped" 'grep -q "A run may brief only some lanes" "$P/skills/red/SKILL.md" && grep -q -- "--skipped" "$P/skills/red/SKILL.md"'
 missing_next=$(for k in gate intake red demo-brief handoff; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
 check "every step names the next command (issue 6)" '[ -z "$missing_next" ] && grep -q "next: \`/clear\`" "$P/skills/gate/SKILL.md"' "$missing_next"
 
