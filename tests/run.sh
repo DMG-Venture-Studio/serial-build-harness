@@ -1091,6 +1091,14 @@ check "the red skill lets a run brief only some lanes, by a standing rule, recor
 missing_next=$(for k in gate intake red demo-brief handoff; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
 check "every step names the next command (issue 6)" '[ -z "$missing_next" ] && grep -q "next: \`/clear\`" "$P/skills/gate/SKILL.md"' "$missing_next"
 
+echo "-- macOS's sh is bash 3.2"
+# Inside a $( ... ), bash 3.2 ends the substitution at a case pattern's bare ")"
+# and the script fails to parse; every such pattern must open with "(".
+bare32=$(for f in "$P"/hooks/scripts/*.sh "$S"/*.sh; do awk -v f="${f#$P/}" -f "$REPO/tests/bash32-case.awk" "$f"; done)
+sed 's/^        (\/proc/        \/proc/' "$H/red-lock.sh" > "$WORK/red-lock-bare.sh"
+check "every case pattern inside a \$( opens with \"(\", so macOS's bash 3.2 parses the hooks (red-lock.sh failed to)" '[ -z "$bare32" ]' "$bare32"
+check "the check finds the bare pattern red-lock.sh had" '[ -n "$(awk -v f=x -f "$REPO/tests/bash32-case.awk" "$WORK/red-lock-bare.sh")" ]'
+
 echo "-- the version (an unchanged version is not picked up by /plugin update)"
 pv=$(jget "$P/.claude-plugin/plugin.json" version)
 mv_=$(jget "$REPO/.claude-plugin/marketplace.json" plugins.0.version)
