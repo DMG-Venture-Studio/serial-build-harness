@@ -221,6 +221,11 @@ hook "$proj" stop-checks.sh '{"session_id":"s1","stop_hook_active":false}'
 t1=$(date +%s)
 check "stop check with 2000 untracked files outside its paths takes under 5 s (review item 7; it took $((t1 - t0)) s)" '[ $((t1 - t0)) -lt 5 ]'
 rm -rf "$proj/junk"
+echo 'y = 4' >> "$proj/src/tally/core.py"
+printf 'cat "$TMPDIR"/serial-build-*/*/stop-suite > "%s/seen" 2>/dev/null; exit 0\n' "$WORK" > "$proj/tests/check.sh"
+hook "$proj" stop-checks.sh '{"session_id":"s1","stop_hook_active":false}'
+check "the stop check holds the suite marker, by its pid, while its rules run, and drops it after (issue 24)" 'grep -q " stop-checks.sh$" "$WORK/seen" && ! ls "$TMPDIR"/serial-build-*/*/stop-suite >/dev/null 2>&1' "$(cat "$WORK/seen" 2>/dev/null)"
+printf 'exit 0\n' > "$proj/tests/check.sh"
 
 hook "$proj" session-start.sh '{"session_id":"s2","source":"startup"}'
 expect "session start names the next gate" 0 "next roadmap gate is match-one-month"
@@ -325,7 +330,27 @@ echo "log line" > "$proj/.env"
 script "$proj" red-guard.sh snapshot
 expect "the snapshot refuses while an ignored file is still being written, naming it" 1 "something is still writing into the project"
 check "and names the file" 'printf "%s" "$out" | grep -qx ".env"' "$out"
+script "$proj" red-guard.sh snapshot --wait 1
+expect "snapshot --wait gives up after its seconds, naming the file it waited on (issue 24)" 1 "waited 1 seconds"
+check "and names the file" 'printf "%s" "$out" | grep -qx ".env"' "$out"
+script "$proj" red-guard.sh snapshot --wait soon
+expect "snapshot --wait takes whole seconds" 1 "takes whole seconds"
 find "$proj/.env" "$proj/node_modules" -exec touch -t 200001010000 {} +
+printf 'sleep 6\n' > "$WORK/stop-checks.sh"
+sh "$WORK/stop-checks.sh" & suitepid=$!
+suite=$(cd "$proj" && SB_ROOT=$(pwd) && SB_PLUGIN=$P && . "$S/lib.sh" && sb_suite_marker)
+printf '%s stop-checks.sh\n' "$suitepid" > "$suite"
+script "$proj" red-guard.sh snapshot --wait 1
+expect "snapshot --wait waits on the end-of-turn suite by its pid, not by a process pattern (issue 24)" 1 "stop-checks.sh, pid $suitepid"
+script "$proj" red-guard.sh snapshot --wait 30
+expect "and proceeds once the suite has ended" 0 "the red lock is held"
+wait "$suitepid" 2>/dev/null; rm -f "$suite"
+script "$proj" red-guard.sh abort
+printf '999999 stop-checks.sh\n' > "$suite"
+script "$proj" red-guard.sh snapshot
+expect "a marker left by a suite that died does not block the snapshot" 0 "the red lock is held"
+rm -f "$suite"
+script "$proj" red-guard.sh abort
 script "$proj" red-guard.sh snapshot
 expect "the snapshot proceeds once nothing has written for two minutes" 0 "the red lock is held"
 export SB_RED_QUIET_MINUTES=0
@@ -735,8 +760,9 @@ sed 's/^Supporting (built here though neither the demo nor the acceptance senten
 cp "$rf/docs/plan.md" "$WORK/p1" && cp "$WORK/p2" "$rf/docs/plan.md"
 script "$rf" red-brief.sh --out "$WORK/rb2"
 check "Supporting: none adds no second attack step (review)" '! grep -q "^2. Then the supporting items" "$WORK/rb2/brief.md" && ! grep -q "Parse the input" "$WORK/rb2/brief.md"'
-awk '/^- an empty statement$/ { print "- an empty statement,"; print "  wrapped onto a second line"; next } /^- the consistency check/ { print "- the consistency check: the next gate"; print "  deploys with it"; next } { print }' "$WORK/p1" > "$rf/docs/plan.md"
+awk '/^Acceptance: / { print "Acceptance: Ada can say it refuses"; print "an empty statement."; next } /^- an empty statement$/ { print "- an empty statement,"; print "  wrapped onto a second line"; next } /^- the consistency check/ { print "- the consistency check: the next gate"; print "  deploys with it"; next } { print }' "$WORK/p1" > "$rf/docs/plan.md"
 script "$rf" red-brief.sh --out "$WORK/rbw"
+check "a wrapped acceptance sentence reaches the brief whole, on one line (issue 24)" 'grep -q "^Acceptance: Ada can say it refuses an empty statement.$" "$WORK/rbw/brief.md"'
 check "a wrapped bullet reaches the brief whole, and so do the bullets after it" 'grep -q "^  wrapped onto a second line" "$WORK/rbw/brief.md" && grep -q "^- a broken neighbour" "$WORK/rbw/brief.md" && grep -q "^  deploys with it" "$WORK/rbw/brief.md"' "$(cat "$WORK/rbw/brief.md")"
 check "a wrapped bullet does not end the count of the Tried to break list" '[ "$(LC_ALL=C awk -f "$S/red-record.awk" "$rf/docs/plan.md" | awk -F "\t" "\$1 == \"TRIED\" { print \$2 }")" = 2 ]'
 cp "$WORK/p1" "$rf/docs/plan.md"

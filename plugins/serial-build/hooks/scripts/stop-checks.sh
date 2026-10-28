@@ -36,7 +36,11 @@ changed=$(sb_changed_files)
 
 state=$(sb_state_dir)
 out=$(mktemp "${TMPDIR:-/tmp}/sb-stop.XXXXXX") || exit 0
-trap 'rm -f "$out"' EXIT
+# Held while the rules run, so red-guard.sh snapshot --wait waits for the suite.
+suite=$(sb_suite_marker)
+printf '%s stop-checks.sh\n' "$$" > "$suite"
+trap 'rm -f "$out" "$suite"' EXIT
+trap 'exit 1' INT TERM HUP
 status=0
 i=0
 while [ "$i" -lt "$n" ]; do

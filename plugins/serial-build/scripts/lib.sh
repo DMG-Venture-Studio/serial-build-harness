@@ -154,12 +154,24 @@ sb_proof_release() {
   return 0
 }
 
-# sb_proof_running: prints the holder's pid. Status 0 while that process is
-# alive and, where ps can tell, still the script that took it (so a pid reused
-# after a reboot does not hold it); 2 when the marker is stale, left by a run
-# that died; 1 when there is none.
+# sb_proof_running: the proof marker's holder, as sb_marker_live reports it
+# (2 is a stale marker, left by a run that died).
 sb_proof_running() {
   _sb_m=$(sb_proof_marker) || return 1
+  sb_marker_live "$_sb_m"
+}
+
+# The marker stop-checks.sh holds while it runs a checks.on_stop rule, so
+# red-guard.sh snapshot --wait can wait on the suite by its pid, which no
+# process-list pattern can match by mistake (the waiter's own command among them).
+sb_suite_marker() { printf '%s/stop-suite\n' "$(sb_state_dir)"; }
+sb_suite_running() { sb_marker_live "$(sb_suite_marker)"; }
+
+# sb_marker_live FILE: FILE holds "<pid> <script name>". Prints the pid. Status 0
+# while that process is alive and, where ps can tell, still that script (so a
+# reused pid does not count); 2 when the marker is stale; 1 when there is none.
+sb_marker_live() {
+  _sb_m=$1
   [ -f "$_sb_m" ] || return 1
   read -r _sb_pid _sb_name < "$_sb_m" 2>/dev/null
   printf '%s\n' "${_sb_pid:-?}"

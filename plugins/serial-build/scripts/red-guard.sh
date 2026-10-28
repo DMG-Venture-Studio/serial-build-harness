@@ -10,7 +10,10 @@
 #             unless no watched ignored file was modified in the last two minutes
 #             (something still writing into the project, such as a dev-stack
 #             daemon's log, would void the run; it is named so it can be stopped
-#             first). Then records the commit, a checksum of every ignored file in
+#             first), and while the checks.on_stop suite runs. --wait [seconds]
+#             (default 540) waits until both are quiet instead of refusing, and
+#             refuses, naming what it waited on, when they are not by then.
+#             Then records the commit, a checksum of every ignored file in
 #             the project (a planted .env or sitecustomize.py hides there), and of
 #             .git's config, info/exclude, info/attributes, and hooks (a planted
 #             post-commit hook or exclude rule hides there), and takes the red
@@ -31,7 +34,7 @@
 # The project may be a subfolder of a larger repository. Residual gap: a file
 # inside an ignored folder (node_modules/) that is modified and then back-dated
 # with touch. The worktree isolation, not this check, keeps that from the project.
-# Usage: red-guard.sh snapshot | verify | abort    (from the project root)
+# Usage: red-guard.sh snapshot [--wait [seconds]] | verify | abort    (from the project root)
 set -u
 SB_PLUGIN=$(cd "$(dirname "$0")/.." && pwd)
 . "$SB_PLUGIN/scripts/lib.sh"
@@ -125,15 +128,33 @@ case "$mode" in
       exit 1
     fi
     quiet=${SB_RED_QUIET_MINUTES:-2}
-    if [ "$quiet" -gt 0 ] 2>/dev/null; then
-      busy=$(inventory | awk -F '\t' '$1 == "ignored" || $1 == "dir" { print $3 }' | while IFS= read -r f; do
+    # busy: what still writes into the project, one line each, or nothing.
+    busy() {
+      if pid=$(sb_suite_running); then echo "the checks.on_stop suite (stop-checks.sh, pid $pid) is still running"; fi
+      [ "$quiet" -gt 0 ] 2>/dev/null || return 0
+      inventory | awk -F '\t' '$1 == "ignored" || $1 == "dir" { print $3 }' | while IFS= read -r f; do
         find "./$f" -type f -mmin "-$quiet" 2>/dev/null | head -n 3
-      done | sed 's|^\./||' | head -n 10)
-      if [ -n "$busy" ]; then
-        printf 'red-guard: something is still writing into the project; stop it first (a dev server, a daemon, a watcher, another session) or wait until nothing has written for that long, then snapshot again. Modified in the last %s minutes:\n%s\n' "$quiet" "$busy" >&2
+      done | sed 's|^\./||' | head -n 10
+    }
+    # --wait polls until nothing writes (the end-of-turn suite leaves its caches
+    # just after the commit this run needs), and gives up after its seconds.
+    wait=; deadline=0
+    if [ "${2:-}" = --wait ]; then
+      wait=${3:-540}
+      case "$wait" in '' | *[!0-9]*) echo "red-guard: --wait takes whole seconds: $wait" >&2; exit 1 ;; esac
+      deadline=$(($(date +%s) + wait))
+    fi
+    while b=$(busy) && [ -n "$b" ]; do
+      if [ "$(date +%s)" -ge "$deadline" ]; then
+        if [ -n "$wait" ]; then
+          printf 'red-guard: waited %s seconds and something still writes into the project; stop it (a dev server, a daemon, a watcher, another session), then snapshot again. Still waiting on:\n%s\n' "$wait" "$b" >&2
+        else
+          printf 'red-guard: something is still writing into the project; stop it first (a dev server, a daemon, a watcher, another session) or snapshot with --wait, which waits until nothing has written for %s minutes. Still writing:\n%s\n' "$quiet" "$b" >&2
+        fi
         exit 1
       fi
-    fi
+      sleep 2
+    done
     { head_of; inventory; } > "$snap"
     : > "$marker"
     printf '%s\n' "$(head -n 1 "$snap")" > "$lock"
@@ -180,7 +201,7 @@ case "$mode" in
     echo
     ;;
   *)
-    echo "usage: red-guard.sh snapshot | verify | abort" >&2
+    echo "usage: red-guard.sh snapshot [--wait [seconds]] | verify | abort" >&2
     exit 2
     ;;
 esac
