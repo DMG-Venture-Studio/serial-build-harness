@@ -78,11 +78,14 @@ else
 fi
 
 top() { awk '/^## / { exit } { print }' "$plan"; }  # the plan's top block
-tried=$(top | awk '/^Tried to break/ { on = 1; next } on && /^- / { print; next } on && NF { exit }')
+# A bullet that wraps keeps its indented lines, so neither it nor the bullets
+# after it are cut.
+tried=$(top | awk '/^Tried to break/ { on = 1; next } on && (/^- / || /^[ \t]+[^ \t]/) { print; next } on && NF { exit }')
 acceptance=$(top | sed -n 's/^Acceptance: //p' | head -n 1)
-# The Supporting block: its line and the bullets directly under it, up to the
-# first blank line (the task list follows it), or nothing when it says none.
-supporting=$(top | awk '/^Supporting/ { on = 1; if ($0 ~ /(:|\|)[[:space:]]*none\.?[[:space:]]*$/) exit; print; next } on && /^- / && !/^- \[/ { print; next } on { exit }')
+# The Supporting block: every line from its own up to the first blank line (the
+# task list follows it) or the first task, so a wrapped line or bullet stays
+# whole; or nothing when it says none.
+supporting=$(top | awk '/^Supporting/ { on = 1 } on && (!NF || /^- \[/) { exit } on && /^- / { list = 1 } on { b = b $0 "\n"; if (!list) h = h $0 "\n" } END { if (h !~ /(:|\|)[[:space:]]*none\.?[[:space:]]*\n$/) printf "%s", b }')
 proof=$(top | awk '/^Proof/ { on = 1; next } on && /^(    |\t)/ { print; next } on && NF { exit }')
 section=$( [ -f docs/roadmap.md ] && awk -v h="### $gate" '$0 == h { on = 1; next } on && (/^(#|##|###) / || /^Later:/) { exit } on' docs/roadmap.md)
 paths=$(k=0; m=$(sb_count "$SB_CFG" red.test_paths); while [ "$k" -lt "$m" ]; do printf '`%s` ' "$(sb_get "$SB_CFG" "red.test_paths.$k")"; k=$((k + 1)); done)

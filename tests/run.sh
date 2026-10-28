@@ -735,6 +735,10 @@ sed 's/^Supporting (built here though neither the demo nor the acceptance senten
 cp "$rf/docs/plan.md" "$WORK/p1" && cp "$WORK/p2" "$rf/docs/plan.md"
 script "$rf" red-brief.sh --out "$WORK/rb2"
 check "Supporting: none adds no second attack step (review)" '! grep -q "^2. Then the supporting items" "$WORK/rb2/brief.md" && ! grep -q "Parse the input" "$WORK/rb2/brief.md"'
+awk '/^- an empty statement$/ { print "- an empty statement,"; print "  wrapped onto a second line"; next } /^- the consistency check/ { print "- the consistency check: the next gate"; print "  deploys with it"; next } { print }' "$WORK/p1" > "$rf/docs/plan.md"
+script "$rf" red-brief.sh --out "$WORK/rbw"
+check "a wrapped bullet reaches the brief whole, and so do the bullets after it" 'grep -q "^  wrapped onto a second line" "$WORK/rbw/brief.md" && grep -q "^- a broken neighbour" "$WORK/rbw/brief.md" && grep -q "^  deploys with it" "$WORK/rbw/brief.md"' "$(cat "$WORK/rbw/brief.md")"
+check "a wrapped bullet does not end the count of the Tried to break list" '[ "$(LC_ALL=C awk -f "$S/red-record.awk" "$rf/docs/plan.md" | awk -F "\t" "\$1 == \"TRIED\" { print \$2 }")" = 2 ]'
 cp "$WORK/p1" "$rf/docs/plan.md"
 script "$rf" red-brief.sh --out "$WORK/rb" --delta
 check "a delta brief is regressions only and lists the findings to re-attack (issue 13)" 'grep -q "A delta run: regressions only" "$WORK/rb/brief.md" && grep -q "red-empty-statement" "$WORK/rb/brief.md" && ! grep -q "^## Your minimum" "$WORK/rb/brief.md"'
