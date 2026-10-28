@@ -586,8 +586,12 @@ sed 's/^refuse_empty = True$//' "$WORK/core.keep" > "$proj/src/tally/core.py"
 retire "sh tests/red_empty.sh"
 expect "a failing proof is never retired; it regresses" 1 "fails now"
 cp "$WORK/core.keep" "$proj/src/tally/core.py"
+[ -f "$proj/docs/plan.md" ] && cp "$proj/docs/plan.md" "$WORK/plan.keep"
+printf '# next\n\nAcceptance: x.\n\nProof:\n\n    sh tests/check.sh\n    sh tests/red_empty.sh tests/check.sh\n\nTried to break (the red lane attempts at least these):\n- y\n' > "$proj/docs/plan.md"
 retire "sh tests/red_empty.sh"
 expect "a proof is retired" 0 "is retired from match-one-month"
+check "and it warns that the active plan still runs the retired test, naming the line (issue 25)" 'printf "%s" "$out" | grep -q "the active plan.s Proof block still runs tests/red_empty.sh" && printf "%s" "$out" | grep -q "^    sh tests/red_empty.sh tests/check.sh$" && ! printf "%s" "$out" | grep -q "still runs tests/check.sh"' "$out"
+if [ -f "$WORK/plan.keep" ]; then mv "$WORK/plan.keep" "$proj/docs/plan.md"; else rm -f "$proj/docs/plan.md"; fi
 check "the command left the Proof block, a Retired line cites the record and the owner, the old entry is filed, all committed" '! grep -q "^    sh tests/red_empty.sh" "$proj/docs/done.md" && grep -q "^    sh tests/check.sh" "$proj/docs/done.md" && grep -q "^Retired: \`sh tests/red_empty.sh\` from the proof. See \`red-weekly\`. The owner said: \"Run it weekly instead.\"" "$proj/docs/done.md" && grep -q "sh tests/red_empty.sh" "$proj"/docs/decisions/sources/retired-match-one-month-*.md && [ "$(git -C "$proj" log -1 --format=%s)" = "serial-build: retire proof match-one-month" ] && [ -z "$(git -C "$proj" status --porcelain -- docs/done.md docs/decisions/sources)" ]'
 script "$proj" check-canon.sh
 expect "the rewritten entry carries a valid checksum" 0 "PASS  every done entry is as ship-gate.sh wrote it"

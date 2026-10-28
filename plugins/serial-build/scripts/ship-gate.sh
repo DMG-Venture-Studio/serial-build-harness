@@ -34,7 +34,9 @@
 #     still runs it); and the owner's words are given. Files the old entry under
 #     the decision sources, adds a "Retired:" line citing the record and the
 #     owner's words, writes the entry's new checksum, and commits as
-#     "serial-build: retire proof <gate-slug>".
+#     "serial-build: retire proof <gate-slug>". Warns, naming the line, when the
+#     active plan's Proof block still runs a test file the command runs, which
+#     the plan must drop before that file is deleted.
 #
 # The owner's acceptance and demotions are their acts; this script only records
 # them. Pass words they actually said, never a paraphrase. Run from the project root.
@@ -205,6 +207,19 @@ if [ "${1:-}" = --retire-proof ]; then
   git add -- "$done" "docs/decisions/sources/$src.md" && git commit -q -m "serial-build: retire proof $slug" -- "$done" "docs/decisions/sources/$src.md" \
     || refuse "the entry is rewritten but could not be committed; commit docs/done.md and the source yourself"
   echo "ship-gate: \`$cmd\` is retired from $slug's proof (See \`$dec\`); the old entry is filed as the decision source $src. The handoff no longer re-runs it."
+  # The active plan may run the same test files; deleting them would fail its
+  # handoff with no hint why, so name each line that does.
+  if [ -f docs/plan.md ]; then
+    planproof=$(awk '/^## / { exit } /^Proof/ { on = 1; next } on && /^(    |\t)/ { print; next } on && NF { exit }' docs/plan.md)
+    set -f
+    for w in $cmd; do
+      w=${w%%::*}
+      [ -f "$w" ] || continue
+      hits=$(printf '%s\n' "$planproof" | grep -F -- "$w")
+      [ -n "$hits" ] && printf 'ship-gate: warning: the active plan'"'"'s Proof block still runs %s:\n%s\nDrop it from docs/plan.md before deleting %s, or the active gate'"'"'s handoff fails.\n' "$w" "$hits" "$w" >&2
+    done
+    set +f
+  fi
   exit 0
 fi
 

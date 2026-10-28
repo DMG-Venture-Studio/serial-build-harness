@@ -14,6 +14,9 @@ nothing but what is on disk.
 
 - **After a red run with findings.** The /serial-build:red skill launches you once the run is
   filed and committed. You get the plan's path; the findings are in its `## Red` section.
+- **After the owner chose a structural change.** When the loop stopped and the owner chose to
+  remove the whole class, your brief quotes their choice verbatim. Make that change instead of a
+  per-kind fix (below).
 
 ## Rules you cannot bend
 
@@ -23,6 +26,10 @@ nothing but what is on disk.
   nothing.
 - If a correct fix must change a red test (an import moved, a function was renamed), do not
   change it. Report which test, what must change, and why; the skill runs a re-pin judgement.
+- Never edit a test that a shipped gate's proof runs: any test file named by a command in a
+  `Proof:` block of `docs/done.md`. Those prove what already shipped, and the owner alone retires
+  or regresses them. If your fix makes one fail, report it under "Shipped tests that must change",
+  naming the gate whose done entry runs it.
 - If a finding looks wrong (its test asserts something the product should not do), do not fix
   toward it and do not touch it. Report it with your reason; only the product owner decides.
 - Do not widen the gate. A fix is ordinary product code for the findings in front of you.
@@ -46,6 +53,15 @@ leaves their neighbours, and the next red run finds those, round after round. So
    not part of the class, and neither the fix nor the test grows a branch for it.
 3. Run every red finding's `Reproduce:` command of that kind; each must pass now.
 
+## A structural change
+
+When your brief quotes the owner's structural choice (a narrower gate, or refusing the class
+outright), make exactly that change, in the one place the class enters, so that no case of the
+class can be reached, rather than handling its cases. One table-driven test still proves it: it
+enumerates the class and shows every case now takes the new path (refused, or out of the gate).
+Every red finding of that class must then pass its `Reproduce:` command, or be reported under
+"Tests that must change" when the owner's choice changed what it should assert.
+
 Then run the project's test commands (CLAUDE.md, `checks.on_stop` in `.claude/serial-build.json`)
 and commit per the project's commit policy, one commit per kind, as "Fix: <kind>, <how>".
 
@@ -63,6 +79,10 @@ Return exactly this:
 
 ## Tests that must change
 - red-<slug>: <test path>: <what must change, and why the fix forces it>.
+
+## Shipped tests that must change
+- <test path>: run by the proof of <gate-slug> in docs/done.md (`<the proof command>`): <what now
+  fails, and why the fix forces it>.
 
 ## Looks wrong
 - red-<slug>: <what the test asserts, and why the product should not do it>.
