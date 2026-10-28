@@ -81,7 +81,8 @@ top() { awk '/^## / { exit } { print }' "$plan"; }  # the plan's top block
 # A bullet that wraps keeps its indented lines, so neither it nor the bullets
 # after it are cut.
 tried=$(top | awk '/^Tried to break/ { on = 1; next } on && (/^- / || /^[ \t]+[^ \t]/) { print; next } on && NF { exit }')
-acceptance=$(top | sed -n 's/^Acceptance: //p' | head -n 1)
+# The acceptance sentence, joined onto one line when it wraps (up to its blank line).
+acceptance=$(top | awk '/^Acceptance: / { on = 1; s = substr($0, 13); next } on && (!NF || /^- / || /^Supporting/) { exit } on { sub(/^[ \t]+/, ""); s = s " " $0 } END { print s }')
 # The Supporting block: every line from its own up to the first blank line (the
 # task list follows it) or the first task, so a wrapped line or bullet stays
 # whole; or nothing when it says none.

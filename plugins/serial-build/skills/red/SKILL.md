@@ -63,9 +63,12 @@ neither voids this run nor hits the red lock.
 
 Stop the dev stack and anything else that writes into the project first: a daemon's log, a
 watcher, a test run in another session. Then run
-`sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-guard.sh" snapshot`. It refuses, naming the file, while
-any watched ignored file was written in the last two minutes, since that writer would void the
-run. It records the commit, every ignored file in the project, and the parts of `.git` every
+`sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-guard.sh" snapshot --wait`, with the Bash tool's timeout
+at its 10-minute maximum. The end-of-turn test suite (`checks.on_stop`) runs right after the
+commit step 1 asked for and writes its caches into the project, so the snapshot waits until that
+suite has finished and no watched ignored file has been written for two minutes, then proceeds;
+never write a wait loop of your own. After 9 minutes it gives up, naming what still writes, since
+that writer would void the run: stop it and snapshot again. It records the commit, every ignored file in the project, and the parts of `.git` every
 worktree shares (config, exclude rules, hooks), so step 4 can prove none of them moved.
 
 It also takes the red lock. Until verify or abort releases it, a hook refuses every agent but the
