@@ -100,6 +100,10 @@ and the owner approves the plan when `/serial-build:gate` takes the draft, exact
 made from scratch. If a draft is already saved, the next command is `/serial-build:gate`, which
 takes it.
 
+When a gate shipped and `docs/roadmap.md` has items under `## Tooling fixes`, or the branch
+`serial-build/tooling-fix` waits to merge, name `/serial-build:tooling-fix` too: with no gate
+active it can merge now.
+
 Never launch a background session that builds; the owner supervises building.
 
 ## What stays out

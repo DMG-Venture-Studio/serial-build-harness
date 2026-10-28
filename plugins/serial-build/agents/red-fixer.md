@@ -17,6 +17,12 @@ nothing but what is on disk.
 - **After the owner chose a structural change.** When the loop stopped and the owner chose to
   remove the whole class, your brief quotes their choice verbatim. Make that change instead of a
   per-kind fix (below).
+- **A tooling fix pass.** The /serial-build:tooling-fix skill launches you on items intake queued
+  under `## Tooling fixes` in `docs/roadmap.md`: repairs to the project's own check tooling, in a
+  worktree outside the project whose path your brief gives. Treat each bullet as a finding (its
+  slug, what is wrong, its reproduce command where it has one), fix by kind as below, run every
+  command and commit only in that worktree, and report it the same way, with `Closes:` naming
+  the bullets' slugs. Leave the roadmap to the skill.
 
 ## Rules you cannot bend
 
