@@ -12,7 +12,9 @@ lane must at least attempt: inputs, orders, neighbours, and limits meant to make
 Acceptance (what {{owner_name}} does on the running product and the sentence they can then say).
 No estimates, no status. A stage may end with a list opening "Later:", naming gates in one line
 each, in order, not yet written out; intake writes the next one out in full, with every section,
-before it is planned. A gate is done only when {{owner_name}} has run its demo; a report, a test, or a green
+before it is planned. A last section, "Tooling fixes", may list repairs to the project's own
+check tooling, one bullet each; they are not gates, and `/serial-build:tooling-fix` fixes them in a
+pass of their own. A gate is done only when {{owner_name}} has run its demo; a report, a test, or a green
 check never accepts a gate. Rationale lives in the decision records a gate names, never here.
 
 ## Stage: {{first_stage}}

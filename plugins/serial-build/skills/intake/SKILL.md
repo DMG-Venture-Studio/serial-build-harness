@@ -60,6 +60,17 @@ f. **Cleanup only**: the finding (1) only repairs or hardens behaviour a shipped
    more away. A draft of that gate already made ahead (`/serial-build:gate --draft`) is not
    edited; the gate skill's delta check sees the changed roadmap section and reviews the change.
 
+   **Cleanup on check tooling is never folded into a product gate.** Check tooling is the
+   project's own checks, not its product: the scripts, rules and loaders that `checks` in
+   `.claude/serial-build.json`, the git hooks, and CI run, and their tests. Folded into a product
+   gate, a tooling repair puts that code back under the product gate's red lane (the round the
+   stopping rule may just have ended) and lets a tooling repair that keeps failing block a ship
+   that has nothing to do with it. Instead, add one bullet per repair to the `## Tooling fixes`
+   section at the end of `docs/roadmap.md` (create it when absent), each as `- <slug>:` followed
+   by what is wrong, the case that shows it, the reproduce command where there is one, and
+   `Source: <source slug>` when step 1 filed one. It is not a gate; `/serial-build:tooling-fix` runs one fix pass over the
+   whole section. Name that command in the summary.
+
 Write every sentence for someone who has never opened the repository: say what each thing is and
 what changes for it, expand every handle into the concrete thing, cite records as See `slug`. No
 dates, statuses, or rejected alternatives outside `docs/decisions/`.

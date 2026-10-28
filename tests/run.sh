@@ -560,6 +560,11 @@ check "the plan is deleted and the gate left the roadmap" '[ ! -f "$proj/docs/pl
 check "ship-gate listed the unticked task" 'printf "%s" "$out" | grep -q "Colour the output"'
 script "$proj" check-canon.sh
 expect "the ledger passes the canon check after shipping" 0 "PASS  every done entry is as ship-gate.sh wrote it"
+cp "$proj/docs/roadmap.md" "$WORK/roadmap.keep"
+printf '\n## Tooling fixes\n\n- rules-blank-key: the rule loader accepts a blank key; `uv run pytest tests/tools/test_rules.py -q` shows it. `Source: red-x`\n' >> "$proj/docs/roadmap.md"
+script "$proj" check-canon.sh
+expect "a roadmap ending in a Tooling fixes section, as intake writes it, passes the canon check (issue 26)" 0 "PASS  every roadmap gate has"
+cp "$WORK/roadmap.keep" "$proj/docs/roadmap.md"
 sed 's/^Accepted: .*/Accepted: "Perfect in every way."/' "$proj/docs/done.md" > "$WORK/d" && cp "$proj/docs/done.md" "$WORK/done.keep" && cp "$WORK/d" "$proj/docs/done.md"
 script "$proj" check-canon.sh
 expect "a done entry changed by hand is reported (review item 10)" 1 "entry match-one-month changed after ship-gate.sh wrote it"
@@ -1125,6 +1130,8 @@ check "the gate template runs the demo before the red task (issue 8)" 'awk "/Run
 check "the red skill runs from a fresh session and has a post-fix delta run (issues 2, 3)" 'grep -q "Run this skill in a fresh session" "$P/skills/red/SKILL.md" && grep -q "## 9. The fix and delta loop, chained" "$P/skills/red/SKILL.md"'
 check "the breaker carries the rules against re-pins (issue 3)" 'grep -q "One finding per test file" "$P/agents/red-breaker.md" && grep -q "at least 5x the measured latency" "$P/agents/red-breaker.md"'
 check "intake folds a cleanup-only finding into the next product gate, stating the cost (issue 5)" 'grep -q "^f. \*\*Cleanup only\*\*" "$P/skills/intake/SKILL.md" && grep -q "blocks that" "$P/skills/intake/SKILL.md"'
+check "intake queues check-tooling cleanup for its own fix pass, never folding it into a product gate (issue 26)" 'grep -q "Cleanup on check tooling is never folded into a product gate" "$P/skills/intake/SKILL.md" && grep -q "## Tooling fixes" "$P/skills/intake/SKILL.md" && grep -q "/serial-build:tooling-fix" "$P/skills/intake/SKILL.md"'
+check "the tooling fix pass works in a worktree, is reviewed, and merges only while no gate is active (issue 26)" 'grep -q "git worktree add -b serial-build/tooling-fix" "$P/skills/tooling-fix/SKILL.md" && grep -q "serial-build:adversarial-reviewer" "$P/skills/tooling-fix/SKILL.md" && grep -q "While \`docs/plan.md\` exists, a gate is active: do not merge" "$P/skills/tooling-fix/SKILL.md" && grep -q "run-proofs.sh" "$P/skills/tooling-fix/SKILL.md" && grep -q "A tooling fix pass" "$P/agents/red-fixer.md"'
 check "handoff starts the next gate's draft without asking, and never a building session (issue 6)" 'grep -q "start drafting it" "$P/skills/handoff/SKILL.md" && grep -q "without asking" "$P/skills/handoff/SKILL.md" && grep -q "Never launch a background session that builds" "$P/skills/handoff/SKILL.md"'
 check "gate takes a waiting draft through the delta check (issue 4)" 'grep -q "plan-draft.sh delta" "$P/skills/gate/SKILL.md" && grep -q "\-\-draft <gate-slug>" "$P/skills/gate/SKILL.md"'
 check "the red skill chains fix and delta runs through fresh agents, stopping on a second delta with findings (issues 13, 15)" 'grep -q "serial-build:red-fixer" "$P/skills/red/SKILL.md" && grep -q "STOP" "$P/skills/red/SKILL.md" && [ -f "$P/agents/red-fixer.md" ] && grep -q "Never edit a red test" "$P/agents/red-fixer.md" && grep -q "table-driven test" "$P/agents/red-fixer.md"'
@@ -1135,7 +1142,7 @@ check "the reviewer, the breaker and the fixer each read the threat model" 'grep
 check "the rules template, the red skill and the gate skill carry the two-round stopping rule" 'grep -q "At most two adversarial rounds on the same check code per gate" "$P/skills/scope/templates/dot-claude/rules/serial-build.md.tmpl" && grep -q "never a third fold" "$P/skills/red/SKILL.md" && grep -q "the same stopping rule" "$P/skills/gate/SKILL.md"'
 check "the scaffolded rules carry the threat model and the stopping rule" 'grep -q "Findings count only inside the threat model" "$proj/.claude/rules/serial-build.md" && grep -q "At most two adversarial rounds" "$proj/.claude/rules/serial-build.md"'
 check "the red skill lets a run brief only some lanes, by a standing rule, recorded with --skipped" 'grep -q "A run may brief only some lanes" "$P/skills/red/SKILL.md" && grep -q -- "--skipped" "$P/skills/red/SKILL.md"'
-missing_next=$(for k in gate intake red demo-brief handoff; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
+missing_next=$(for k in gate intake red demo-brief handoff tooling-fix; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
 check "every step names the next command (issue 6)" '[ -z "$missing_next" ] && grep -q "next: \`/clear\`" "$P/skills/gate/SKILL.md"' "$missing_next"
 
 echo "-- the version (an unchanged version is not picked up by /plugin update)"
