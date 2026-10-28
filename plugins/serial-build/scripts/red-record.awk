@@ -30,6 +30,7 @@ function flush(   slug) {
 /^## / { body = 1 }
 /^Tried to break/ && !body { tried = 1; next }
 tried && /^- / { T++; next }
+tried && /^[ \t]+[^ \t]/ { next }  # a wrapped bullet's next line, not the list's end
 tried { tried = 0 }
 
 /^## Red[[:space:]]*$/ { inred = 1; next }
