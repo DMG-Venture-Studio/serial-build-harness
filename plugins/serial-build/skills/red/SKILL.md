@@ -255,7 +255,8 @@ holding only file paths and verdicts, never the code, and every agent it launche
    point), not one patch and one test per reported case. Point fixes are what kept a measured
    gate looping for three rounds; the class fix took fourteen minutes and closed five findings.
 2. **Read its report.** "Looks wrong" items go to the owner (below). "Tests that must change" go to
-   a re-pin judgement (below). Then run `red-status.sh`: every finding it reports fixed must read
+   a re-pin judgement (below). "Shipped tests that must change" go to the owner as the shipped-gate
+   case (below); never edit one. Then run `red-status.sh`: every finding it reports fixed must read
    RESOLVED.
 3. **Delta run.** Back to step 2, briefed with `red-brief.sh --delta` and filed with
    `red-file.sh --delta`. It is regressions only: what the fixes made newly possible, and cases
@@ -269,6 +270,13 @@ holding only file paths and verdicts, never the code, and every agent it launche
    demoted on their words, below, and filed through `/serial-build:intake`). This is the same
    stopping rule the project's process rules set for adversarial rounds on check code: two fold
    rounds, then the owner's one-line choice, never a third fold.
+5. **After a structural change.** When the owner chooses it, launch the `serial-build:red-fixer`
+   agent once more, with the line "Fix the red findings in docs/plan.md's Red section, following
+   your instructions. The owner chose a structural change: '<their choice, verbatim>'." It makes
+   that change instead of a per-kind fix. Read its report as in 2, route every test it lists, and
+   run `red-status.sh`, which must read clear. No delta run follows, and no further red run is due
+   on that code for this gate: a third adversarial round on it is the round the stopping rule
+   forbids. Then step 10.
 
 Stop and ask the owner only for: a finding that may be wrong (the demote question), the STOP
 above, or a clean run, when the loop ends and step 10 names the next command.
@@ -291,6 +299,17 @@ above, or a clean run, when the loop ends and step 10 names the next command.
   `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-repin.sh" red-<slug> [red-<slug>...] --source <that source's slug>`.
   The script refuses, re-pinning none, unless each changed test still fails on the commit that
   recorded its finding, from before the fix, and commits all the re-pins together.
+- **A fix broke a shipped gate's test** (a test a `Proof:` command in `docs/done.md` runs, such as
+  an earlier gate's red test): never edit it, and the re-pin above does not cover it, since it
+  belongs to no finding in the active plan. Ask the owner with AskUserQuestion, one question per
+  test: which gate's proof runs it, what now fails and why the fix forces it, and the options
+  "Retire the proof" and "Move the gate back". On "Retire the proof", record the decision
+  through `/serial-build:intake` (the record names the test and that it is retired on purpose),
+  then run
+  `sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --retire-proof <gate-slug> "<proof command>" --decision <slug> --owner-said "<their answer, verbatim>"`;
+  it warns when the active plan's Proof block still runs the same test, which the plan must drop
+  before the test is deleted. On "Move the gate back", run
+  `sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" --regress <gate-slug> --failed "<the failing output>"`.
 
 ## 10. Report
 
