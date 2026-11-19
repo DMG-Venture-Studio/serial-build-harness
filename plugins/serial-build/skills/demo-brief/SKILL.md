@@ -22,7 +22,11 @@ Twice per gate, and the second run is cheap:
   guard watches ignored files, and a daemon still writing into the project voids the red run.
 - **Refresh, after red is clear.** Re-run only the commands the drafted brief states, so every
   fact is computed now, and update any fact that moved. The brief the owner reads is this
-  refreshed one. If there is no drafted brief, do the steps below in full.
+  refreshed one. If there is no drafted brief, do the steps below in full. End the refresh with
+  `sh "${CLAUDE_PLUGIN_ROOT}/scripts/next-step.sh" mark-brief`, which records in the brief the
+  commit it was refreshed on (it refuses while the red record is not clear or the gate's work is
+  not committed), then commit the plan. That line is how the ledger shows the gate is ready for
+  the owner; the brief counts as fresh until a file outside `docs/` changes.
 
 In `docs/plan.md` the brief goes after the plan's top block and before `## Red`. No line of it
 starts with `Proof`, `Manual:`, `Tried to break`, or `Acceptance:`; those lines belong to the top
@@ -57,7 +61,12 @@ verdict into a stronger claim than the owner made.
 
 ## Next
 
-After the refresh, the owner runs the demo. The next command is `/serial-build:handoff`, in this
-same session: the owner's acceptance words are in it, and handoff ships only on words the owner
-said in the session that runs it. This is the one step that does not start fresh, and the
-session is small, since it began at the refresh.
+After the refresh, the owner runs the demo. When they say the acceptance sentence in this
+session, run `/serial-build:handoff` yourself, at once; never hand them the command to type. The
+owner's acceptance words are in this session, and handoff ships only on words the owner said in
+the session that runs it. This is the one step that does not start fresh, and the session is
+small, since it began at the refresh. If they do not say it, or their break step broke it, follow
+"After the owner answers" above and do not run the handoff.
+
+With no owner in the session (the driver ran this skill headless), end after the refresh and its
+mark: the driver reads the ledger, stops, and tells the owner the demo is ready.

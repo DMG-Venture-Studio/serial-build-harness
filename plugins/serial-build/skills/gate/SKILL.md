@@ -87,7 +87,8 @@ reason it stays in this gate> | none
 - [ ] Run the demo end to end on the running product, including its Break it: step, draft the
       demo brief into this plan under `## Demo brief`, and fix what the run shows. Stop the dev
       stack and every process it started before the next task.
-- [ ] Run /serial-build:red on this gate and fix every red finding it reproduces.
+- [ ] Run /serial-build:red on this gate, from a fresh session and never the builder's; its fixer
+      fixes every red finding it reproduces.
 
 Proof (the commands done will re-run; each must pass before the gate ships):
 
@@ -177,11 +178,14 @@ question to `docs/open.md` under its slug, and run
 Commit it per the project's commit policy, as "Plan: <gate-slug>, <what it builds>".
 
 Then name the next step in one line, to run after `/clear` or in a new session, since the plan
-holds everything the builder needs: "next: `/clear`, then build `docs/plan.md`".
+holds everything the builder needs: "next: `/clear`, then build `docs/plan.md`". Name the driver
+beside it: `/serial-build:advance` builds the plan, runs the red lane and refreshes the demo brief,
+each in a fresh headless session, and stops when it needs the owner.
 
 ## When the gate ships
 
 A gate is done when the owner has run its demo, including its break step, and said its acceptance
 sentence; a report, a test, or a green check never accepts it. `/serial-build:handoff` ships it
 through the ship-gate script, which refuses while the red lane's record is not clear or a proof
-fails, then writes the done entry, removes the gate from the roadmap, and deletes `docs/plan.md`.
+fails, then writes the done entry, removes the gate from the roadmap, files the plan verbatim as a
+decision source, and removes `docs/plan.md`.

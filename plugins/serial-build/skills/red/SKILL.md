@@ -317,6 +317,7 @@ Consequence first, to the owner: how many runs and attacks, what broke and what 
 meant for a user, each kind and how it was fixed, and what the loop cost. Quote the last line of
 `red-status.sh`: the gate cannot hand off until it says clear.
 
-End with the next command, to run after `/clear` or in a new session: when the loop ended clean,
-"next: `/clear`, then `/serial-build:demo-brief`"; when it stopped for the owner, what it needs
-from them.
+When the loop ended clean, the next step is the demo brief's refresh, and the owner does not
+type it: run `/serial-build:demo-brief` now, in this session. This session holds only paths and
+verdicts, never the code, so the refresh is cheap here. When the loop stopped for the owner, end
+with what it needs from them.

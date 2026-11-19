@@ -558,6 +558,7 @@ check "a demo brief in the plan adds no proof command and no Tried to break bull
 check "the done entry carries proof, the red test, what was tried, and the owner's words" 'grep -q "^    sh tests/check.sh" "$proj/docs/done.md" && grep -q "^    sh tests/red_empty.sh" "$proj/docs/done.md" && grep -q "^Tried to break: 2 attempts by the red lane" "$proj/docs/done.md" && grep -q "^Accepted: \"It found my two missing transactions.\"" "$proj/docs/done.md"'
 check "the plan is deleted and the gate left the roadmap" '[ ! -f "$proj/docs/plan.md" ] && ! grep -q "^### match-one-month" "$proj/docs/roadmap.md"'
 check "ship-gate listed the unticked task" 'printf "%s" "$out" | grep -q "Colour the output"'
+check "the shipped plan is kept: filed verbatim as a decision source the done entry names" 'f=$(ls "$proj"/docs/decisions/sources/plan-match-one-month-*.md 2>/dev/null) && grep -q "Colour the output" "$f" && grep -q "^## Red" "$f" && grep -q "^Plan: the plan as shipped is filed as the decision source .plan-match-one-month-" "$proj/docs/done.md"'
 script "$proj" check-canon.sh
 expect "the ledger passes the canon check after shipping" 0 "PASS  every done entry is as ship-gate.sh wrote it"
 cp "$proj/docs/roadmap.md" "$WORK/roadmap.keep"
@@ -570,6 +571,8 @@ script "$proj" check-canon.sh
 expect "a done entry changed by hand is reported (review item 10)" 1 "entry match-one-month changed after ship-gate.sh wrote it"
 cp "$WORK/done.keep" "$proj/docs/done.md"
 echo "-- ship-gate --retire-proof: a proof leaves done only for a recorded reason (issue 7)"
+# The handoff commits what a ship wrote; here that is the shipped plan's decision source.
+(cd "$proj" && git add -- docs/decisions/sources/plan-match-one-month-*.md && git commit -qm "Handoff: match-one-month shipped" -- docs/decisions/sources)
 retire() { ship --retire-proof match-one-month "$1" --decision red-weekly --owner-said "Run it weekly instead."; }
 retire "sh tests/red_empty.sh"
 expect "retiring a proof needs a decision record" 1 "no decision record"
@@ -1017,6 +1020,158 @@ expect "verify reads test paths relative to the subproject" 0 "tests/red_x.sh"
 (cd "$mono" && git worktree add -q --detach "$WORK/mwt" HEAD)
 hook "$mono/app" red-fence.sh "$(red_input Write "\"file_path\":\"$WORK/mwt/app/tests/test_red.py\"")"; silent "the fence maps the worktree to the subproject"
 
+# ---------------------------------------------------------------- the loop that advances itself
+echo "-- next-step: the ledger says what is next and whether the owner is needed"
+# ns_project DIR: a scoped project whose first gate is planned and half built.
+ns_plan() {
+  cat <<'EOF'
+# first-gate
+
+Acceptance: Ada runs it and can say it greets her by name.
+
+- [x] Print the greeting.
+- [ ] Refuse an empty name.
+- [ ] Run /serial-build:red on this gate, from a fresh session and never the builder's; its fixer
+      fixes every red finding it reproduces.
+
+Proof (the commands done will re-run):
+
+    sh tests/check.sh
+
+Tried to break (the red lane attempts at least these):
+- an empty name
+
+Blocking open questions: none
+EOF
+}
+ns_project() {
+  mkdir -p "$1/.claude" "$1/docs/decisions/sources" "$1/src" "$1/tests"
+  (cd "$1" && git init -q)
+  printf '{"version":1,"owner":{"name":"Ada"},"red":{"test_paths":["tests/**"]}}\n' > "$1/.claude/serial-build.json"
+  printf '# Roadmap\n\n## Stage: one\n\nGoal: a first gate.\n\n### first-gate\n\nBuilds: a greeting.\n' > "$1/docs/roadmap.md"
+  echo 'x = 1' > "$1/src/app.py"
+  printf 'exit 0\n' > "$1/tests/check.sh"
+  echo "# Source: red-breaker output, verbatim" > "$1/docs/decisions/sources/red-first-gate-2026-10-02.md"
+  commit "$1" scope
+}
+ns_red='
+## Red
+
+Red run: 2026-10-02, 1 attempts, 0 findings. Source: `red-first-gate-2026-10-02`.
+
+Attempts that found nothing:
+- an empty name: refused, naming the field
+'
+ns="$WORK/ns"
+mkdir -p "$ns" && (cd "$ns" && git init -q)
+step() { script "$ns" next-step.sh "$@"; }
+step; expect "next-step refuses a folder that is not a serial-build project" 1 "not a serial-build project"
+ns_project "$ns"
+printf '# Roadmap\n\n## Stage: one\n\nGoal: a first gate.\n\nLater:\n- first-gate: prints a greeting\n' > "$ns/docs/roadmap.md"
+commit "$ns" "only a one-line gate"
+step; expect "only one-line gates are left: intake writes the next one out, and no owner is needed" 0 "step: intake"
+git -C "$ns" reset -q --hard HEAD~1
+step; expect "a written-out gate with no plan and no draft: its plan is drafted, and no owner is needed" 0 "step: draft"
+script "$ns" plan-draft.sh start first-gate
+step; expect "a draft still being written: nothing to run, wait for it" 3 "step: wait"
+printf '# first-gate\n\nAcceptance: Ada can say it greets her.\n' > "$WORK/draft.md"
+script "$ns" plan-draft.sh save first-gate "$WORK/draft.md"
+step; expect "a saved draft stops for the owner, who alone approves a plan" 2 "step: gate"
+check "the approval is put to the owner as a question" 'printf "%s" "$out" | grep -q "^owner: yes" && printf "%s" "$out" | grep -q "^ask: Approve the plan for first-gate"'
+script "$ns" plan-draft.sh drop first-gate
+ns_plan > "$ns/docs/plan.md"; commit "$ns" "Plan: first-gate"
+step; expect "an unticked task: the build is next, and no owner is needed" 0 "step: build"
+check "the red task is the red lane's, not counted as the builder's" 'printf "%s" "$out" | grep -q "^why: 1 task"'
+script "$ns" next-step.sh park "Should an empty name be refused or greeted as a guest? Refusing is the gate as written."
+expect "a builder parks a question only the owner can answer" 0 "parked"
+check "the question is committed at the top of the plan" 'sed -n 3p "$ns/docs/plan.md" | grep -q "^Ask first: Should an empty name" && [ -z "$(git -C "$ns" status --porcelain)" ]'
+step; expect "a parked question stops for the owner and carries the question" 2 "ask: Should an empty name be refused"
+hook "$ns" session-start.sh '{"session_id":"n1","source":"startup"}'
+expect "session start points at next-step for the exact step" 0 "scripts/next-step.sh"
+script "$ns" next-step.sh answer "Refuse it."
+expect "the owner's answer is recorded" 0 "recorded"
+check "the answer is committed verbatim, and the question no longer blocks" 'grep -q "^Answered: Should an empty name.* The owner said: \"Refuse it.\"" "$ns/docs/plan.md" && ! grep -q "^Ask first" "$ns/docs/plan.md" && git -C "$ns" log -1 --format=%s | grep -q "serial-build: owner answered"'
+script "$ns" next-step.sh answer "Again."
+expect "with no question parked there is nothing to answer" 1 "no \"Ask first:\" line"
+step; expect "once answered, the step is the build again" 0 "step: build"
+sed 's/^- \[ \] Refuse/- [x] Refuse/' "$ns/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$ns/docs/plan.md"
+step; expect "every task ticked but not committed is still the builder's" 0 "not committed"
+commit "$ns" "Refuse an empty name"
+step; expect "built and committed: the red lane is next" 0 "step: red"
+script "$ns" next-step.sh mark-brief
+expect "a brief that is not written cannot be marked" 1 "no \"## Demo brief\" section"
+printf '\n## Demo brief\n\nWhat to do: run it with your name.\n' >> "$ns/docs/plan.md"; commit "$ns" "Demo brief, drafted"
+script "$ns" next-step.sh mark-brief
+expect "the brief is not marked while the red record is not clear" 1 "not clear"
+printf '%s' "$ns_red" >> "$ns/docs/plan.md"; commit "$ns" "Red: first-gate, 0 findings"
+script "$ns" red-status.sh; expect "(the fixture's red record is clear)" 0"Clear to hand off"
+step; expect "red clear and the brief not refreshed on this code: the demo brief is next" 0 "step: demo-brief"
+echo 'x = 3' > "$ns/src/app.py"
+script "$ns" next-step.sh mark-brief
+expect "the brief is not marked over uncommitted code" 1 "not committed"
+git -C "$ns" checkout -q -- src/app.py
+script "$ns" next-step.sh mark-brief
+expect "the refreshed brief is marked with the commit it was refreshed on" 0 "marked as refreshed"
+commit "$ns" "Demo brief, refreshed"
+step; expect "built, attacked and briefed: only the owner accepts it" 2 "step: demo"
+check "the owner is asked to run the demo, with the acceptance sentence" 'printf "%s" "$out" | grep -q "^ask: Run the demo.*Ada runs it and can say it greets her by name"'
+script "$ns" red-status.sh; expect "marking the brief leaves the red record clear" 0"Clear to hand off"
+echo 'x = 2' > "$ns/src/app.py"; commit "$ns" "a late fix"
+step; expect "code changed after the refresh: the brief is stale and is refreshed again" 0 "step: demo-brief"
+script "$ns" next-step.sh mark-brief
+check "marking again replaces the mark, never stacks a second" '[ "$(grep -c "^Refreshed: red clear at " "$ns/docs/plan.md")" -eq 1 ]'
+
+echo "-- advance: the driver runs each ownerless step in its own headless session and stops for the owner"
+# A stand-in for Claude Code: logs the call, then does what that step's session would do.
+cat > "$WORK/fakeclaude" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_LOG"
+prompt=
+while [ $# -gt 0 ]; do [ "$1" = -p ] && prompt=${2:-}; shift; done
+case "${FAKE_MODE:-}" in idle) exit 0 ;; fail) echo "the model was unreachable"; exit 1 ;; esac
+case "$prompt" in
+  *"unticked tasks"*)
+    sed 's/^- \[ \] Refuse/- [x] Refuse/' docs/plan.md > p.tmp && mv p.tmp docs/plan.md && git add -A && git commit -qm build ;;
+  /serial-build:red)
+    printf '%s' "$FAKE_RED" >> docs/plan.md && git add -A && git commit -qm red ;;
+  /serial-build:demo-brief)
+    awk '/^## Red$/ { print "## Demo brief"; print ""; print "What to do: run it with your name."; print "" } { print }' docs/plan.md > p.tmp && mv p.tmp docs/plan.md
+    sh "$FAKE_S/next-step.sh" mark-brief && git add -A && git commit -qm brief ;;
+  "/serial-build:gate --draft "*)
+    g=${prompt##* }; printf '# %s\n\nAcceptance: Ada can say it greets her.\n' "$g" > docs/plan.md; sh "$FAKE_S/plan-draft.sh" save "$g" ;;
+esac
+EOF
+chmod +x "$WORK/fakeclaude"
+export FAKE_LOG="$WORK/fake.log" FAKE_S="$S" FAKE_RED="$ns_red" NOTE="$WORK/note"
+: > "$FAKE_LOG"
+dv="$WORK/dv"
+ns_project "$dv"; ns_plan > "$dv/docs/plan.md"; commit "$dv" "Plan: first-gate"
+adv() { (cd "$dv" && SB_CLAUDE="$WORK/fakeclaude" SB_CLAUDE_ARGS="--permission-mode acceptEdits" "$SHELL_UNDER_TEST" "$S/advance.sh" "$@") > "$WORK/out" 2>&1; code=$?; out=$(cat "$WORK/out"); err=; }
+adv --dry-run; expect "a dry run names the first step and why" 0 "would run build for first-gate"
+check "a dry run starts no session" '[ ! -s "$FAKE_LOG" ]'
+export FAKE_MODE=idle
+adv; expect "a step that made no progress is never paid for twice" 1 "the ledger still calls for it"
+check "the idle step ran exactly once" '[ "$(grep -c . "$FAKE_LOG")" -eq 1 ]'
+: > "$FAKE_LOG"; export FAKE_MODE=fail
+adv; expect "a session that exits with an error stops the driver, naming its log" 1 "exited with an error"
+check "the failed session's last words are shown" 'printf "%s" "$out" | grep -q "the model was unreachable"'
+: > "$FAKE_LOG"; unset FAKE_MODE
+adv --max-steps 1; expect "the step limit stops the driver before the next session starts" 1 "limit of 1 steps"
+export SB_NOTIFY='printf "%s|%s|%s" "$SB_GATE" "$SB_STEP" "$SB_ASK" > "$NOTE"'
+adv; expect "the driver stops for the owner once the gate is built, attacked and briefed" 2 "stopped for the owner at demo"
+unset SB_NOTIFY
+check "it ran the build, the red lane and the brief in order, each as its own headless session with the owner's arguments" '[ "$(grep -c . "$FAKE_LOG")" -eq 3 ] && sed -n 1p "$FAKE_LOG" | grep -q "^--permission-mode acceptEdits -p Continue the active gate" && sed -n 2p "$FAKE_LOG" | grep -q -- "-p /serial-build:red$" && sed -n 3p "$FAKE_LOG" | grep -q -- "-p /serial-build:demo-brief$"' "$(cat "$FAKE_LOG")"
+check "the builder is told to park owner questions, never to guess, and not to run the red lane" 'sed -n 1p "$FAKE_LOG" | grep -q "next-step.sh" && sed -n 1p "$FAKE_LOG" | grep -q " park " && sed -n 1p "$FAKE_LOG" | grep -q "Do not run /serial-build:red"' "$(sed -n 1p "$FAKE_LOG")"
+check "the owner is told through SB_NOTIFY, with the gate, the step and the question" 'grep -q "^first-gate|demo|Run the demo" "$NOTE"' "$(cat "$NOTE" 2>/dev/null)"
+: > "$FAKE_LOG"
+dv2="$WORK/dv2"
+ns_project "$dv2"
+(cd "$dv2" && SB_CLAUDE="$WORK/fakeclaude" "$SHELL_UNDER_TEST" "$S/advance.sh") > "$WORK/out" 2>&1; code=$?; out=$(cat "$WORK/out"); err=
+expect "with no plan, the driver drafts the next gate's plan in its own worktree and stops for the owner's approval" 2 "stopped for the owner at gate"
+check "the draft session ran outside the project, and the project has no plan of its own yet" 'grep -q -- "-p /serial-build:gate --draft first-gate$" "$FAKE_LOG" && [ ! -f "$dv2/docs/plan.md" ]'
+script "$dv2" plan-draft.sh drop first-gate
+unset FAKE_LOG FAKE_S FAKE_RED NOTE
+
 # ---------------------------------------------------------------- configs
 echo "-- run-proofs: the stop hook waits while a proof has the tree half-changed (issue 10)"
 check "ship-gate left no proof marker behind, even where it refused (issue 10)" '! ls "$proj"/.git/serial-build/proofs-* >/dev/null 2>&1' "$(ls "$proj"/.git/serial-build)"
@@ -1142,6 +1297,9 @@ check "the reviewer, the breaker and the fixer each read the threat model" 'grep
 check "the rules template, the red skill and the gate skill carry the two-round stopping rule" 'grep -q "At most two adversarial rounds on the same check code per gate" "$P/skills/scope/templates/dot-claude/rules/serial-build.md.tmpl" && grep -q "never a third fold" "$P/skills/red/SKILL.md" && grep -q "the same stopping rule" "$P/skills/gate/SKILL.md"'
 check "the scaffolded rules carry the threat model and the stopping rule" 'grep -q "Findings count only inside the threat model" "$proj/.claude/rules/serial-build.md" && grep -q "At most two adversarial rounds" "$proj/.claude/rules/serial-build.md"'
 check "the red skill lets a run brief only some lanes, by a standing rule, recorded with --skipped" 'grep -q "A run may brief only some lanes" "$P/skills/red/SKILL.md" && grep -q -- "--skipped" "$P/skills/red/SKILL.md"'
+check "the owner types no command between a clean red run and the brief, or between their acceptance and the ship" '! grep -q "disable-model-invocation" "$P/skills/handoff/SKILL.md" && grep -q "run ./serial-build:handoff. yourself, at once" "$P/skills/demo-brief/SKILL.md" && grep -q "mark-brief" "$P/skills/demo-brief/SKILL.md" && grep -q "run ./serial-build:demo-brief. now, in this session" "$P/skills/red/SKILL.md"'
+check "only the owner starts the driver, and the gate skill names it" 'grep -q "^disable-model-invocation: true" "$P/skills/advance/SKILL.md" && grep -q "/serial-build:advance" "$P/skills/gate/SKILL.md" && grep -q "/serial-build:advance" "$P/skills/handoff/SKILL.md"'
+check "handoff still ships only on the owner's words" 'grep -q "never on anything else" "$P/skills/handoff/SKILL.md"'
 missing_next=$(for k in gate intake red demo-brief handoff tooling-fix; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)
 check "every step names the next command (issue 6)" '[ -z "$missing_next" ] && grep -q "next: \`/clear\`" "$P/skills/gate/SKILL.md"' "$missing_next"
 
