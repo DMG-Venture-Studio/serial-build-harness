@@ -1129,6 +1129,12 @@ printf '%s\n' "$*" >> "$FAKE_LOG"
 prompt=
 while [ $# -gt 0 ]; do [ "$1" = -p ] && prompt=${2:-}; shift; done
 case "${FAKE_MODE:-}" in idle) exit 0 ;; fail) echo "the model was unreachable"; exit 1 ;; esac
+if [ "${FAKE_MODE:-}" = decide ]; then
+  # A builder that answers the owner's question itself: it rewrites the acceptance and records a decision.
+  sed 's/^- \[ \] Refuse/- [x] Refuse/; s/^Acceptance: .*/Acceptance: Ada or a guest is greeted./' docs/plan.md > p.tmp && mv p.tmp docs/plan.md
+  printf 'Date: 2026-10-02\n\n## Decided\n\n- An empty name is greeted as a guest.\n\n## Rejected\n\n- Refusing it.\n\n## Reopens if\n\n- Never.\n' > docs/decisions/2026-10-02-guest-greeting.md
+  git add -A && git commit -qm "build, deciding for the owner"; exit 0
+fi
 case "$prompt" in
   *"unticked tasks"*)
     sed 's/^- \[ \] Refuse/- [x] Refuse/' docs/plan.md > p.tmp && mv p.tmp docs/plan.md && git add -A && git commit -qm build ;;
@@ -1163,6 +1169,14 @@ unset SB_NOTIFY
 check "it ran the build, the red lane and the brief in order, each as its own headless session with the owner's arguments" '[ "$(grep -c . "$FAKE_LOG")" -eq 3 ] && sed -n 1p "$FAKE_LOG" | grep -q "^--permission-mode acceptEdits -p Continue the active gate" && sed -n 2p "$FAKE_LOG" | grep -q -- "-p /serial-build:red$" && sed -n 3p "$FAKE_LOG" | grep -q -- "-p /serial-build:demo-brief$"' "$(cat "$FAKE_LOG")"
 check "the builder is told to park owner questions, never to guess, and not to run the red lane" 'sed -n 1p "$FAKE_LOG" | grep -q "next-step.sh" && sed -n 1p "$FAKE_LOG" | grep -q " park " && sed -n 1p "$FAKE_LOG" | grep -q "Do not run /serial-build:red"' "$(sed -n 1p "$FAKE_LOG")"
 check "the owner is told through SB_NOTIFY, with the gate, the step and the question" 'grep -q "^first-gate|demo|Run the demo" "$NOTE"' "$(cat "$NOTE" 2>/dev/null)"
+: > "$FAKE_LOG"
+dv3="$WORK/dv3"
+ns_project "$dv3"; ns_plan > "$dv3/docs/plan.md"; commit "$dv3" "Plan: first-gate"
+export FAKE_MODE=decide
+(cd "$dv3" && SB_CLAUDE="$WORK/fakeclaude" "$SHELL_UNDER_TEST" "$S/advance.sh") > "$WORK/out" 2>&1; code=$?; out=$(cat "$WORK/out"); err=
+unset FAKE_MODE
+expect "a build that decided for the owner stops the driver before the red lane runs" 2 "changed what only the owner decides"
+check "it names the decision record and the changed plan, and ran nothing after the build" 'printf "%s" "$out" | grep -q "^docs/decisions/2026-10-02-guest-greeting.md$" && printf "%s" "$out" | grep -q "^docs/plan.md (a task, the acceptance" && [ "$(grep -c . "$FAKE_LOG")" -eq 1 ]' "$out"
 : > "$FAKE_LOG"
 dv2="$WORK/dv2"
 ns_project "$dv2"
@@ -1298,6 +1312,7 @@ check "the rules template, the red skill and the gate skill carry the two-round 
 check "the scaffolded rules carry the threat model and the stopping rule" 'grep -q "Findings count only inside the threat model" "$proj/.claude/rules/serial-build.md" && grep -q "At most two adversarial rounds" "$proj/.claude/rules/serial-build.md"'
 check "the red skill lets a run brief only some lanes, by a standing rule, recorded with --skipped" 'grep -q "A run may brief only some lanes" "$P/skills/red/SKILL.md" && grep -q -- "--skipped" "$P/skills/red/SKILL.md"'
 check "the owner types no command between a clean red run and the brief, or between their acceptance and the ship" '! grep -q "disable-model-invocation" "$P/skills/handoff/SKILL.md" && grep -q "run ./serial-build:handoff. yourself, at once" "$P/skills/demo-brief/SKILL.md" && grep -q "mark-brief" "$P/skills/demo-brief/SKILL.md" && grep -q "run ./serial-build:demo-brief. now, in this session" "$P/skills/red/SKILL.md"'
+check "the demo brief lists the choices the build made, for the owner to read before accepting" 'grep -q "Choices the build made" "$P/skills/demo-brief/SKILL.md"'
 check "only the owner starts the driver, and the gate skill names it" 'grep -q "^disable-model-invocation: true" "$P/skills/advance/SKILL.md" && grep -q "/serial-build:advance" "$P/skills/gate/SKILL.md" && grep -q "/serial-build:advance" "$P/skills/handoff/SKILL.md"'
 check "handoff still ships only on the owner's words" 'grep -q "never on anything else" "$P/skills/handoff/SKILL.md"'
 missing_next=$(for k in gate intake red demo-brief handoff tooling-fix; do grep -q "next" "$P/skills/$k/SKILL.md" || printf "%s " "$k"; done)

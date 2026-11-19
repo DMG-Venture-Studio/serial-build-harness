@@ -48,6 +48,12 @@ block, which the scripts read.
      accepted).
    - **What to report back**: the two to four observations the acceptance sentence needs, as
      questions the owner can answer in a sentence each.
+   - **Choices the build made**: every behaviour the owner will meet that neither the plan nor a
+     decision record it names states (a default, a name, a message, a limit, what happens on a
+     bad input), one line each, with what was chosen. Find them by reading the diff since the
+     plan was committed, not from memory; write "none" when there are none. A builder that runs
+     unattended is told to ask rather than choose, and this list is where a choice it made anyway
+     reaches the owner before they accept.
 4. Define every term where it first appears in the brief, even ones used earlier in the session.
    Consequence before mechanism. No emojis.
 

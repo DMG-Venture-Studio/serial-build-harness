@@ -17,6 +17,15 @@
 # step the ledger calls for (so a step that made no progress is never paid for
 # twice); a session exits non-zero; or --max-steps (default 12) is reached.
 #
+# A build session is told to park a question only the owner can answer, never
+# to guess. That is an instruction, so after every build the driver also checks
+# what the session wrote: if it changed the approved plan beyond ticking tasks
+# (a task, the acceptance, the proof, the attack list), or wrote a decision
+# record, an open question, the glossary, the design, or the roadmap, the driver
+# stops for the owner and names each file, before the red lane spends anything
+# on the result. A choice the session made only in code is not seen by this
+# check; the demo brief lists those for the owner (see /serial-build:demo-brief).
+#
 # Environment:
 #   SB_CLAUDE       the Claude Code command (default: claude)
 #   SB_CLAUDE_ARGS  extra arguments for every headless run, split on spaces. A
@@ -53,6 +62,22 @@ field() { printf '%s\n' "$state" | sed -n "s/^$1: //p" | head -n 1; }
 notify() {
   [ -n "${SB_NOTIFY:-}" ] || return 0
   SB_GATE=$gate SB_STEP=$step SB_ASK=$1 sh -c "$SB_NOTIFY" >/dev/null 2>&1 || echo "advance: the SB_NOTIFY command failed; the owner was not told by it."
+}
+# plan_scope: the part of a plan (on stdin) only the owner changes: its top block,
+# with ticks and the parked-question lines taken out.
+plan_scope() { awk '/^## / { exit } /^(Ask first|Answered:)/ { next } { sub(/^- \[[xX]\]/, "- [ ]"); print }' | sed '/^$/d'; }
+# owner_only_changes COMMIT: what changed since COMMIT that only the owner decides.
+owner_only_changes() {
+  git rev-parse -q --verify "$1^{commit}" >/dev/null 2>&1 || return 0
+  set -- "$1" docs/decisions docs/open.md docs/glossary.md docs/design.md docs/roadmap.md
+  { _c=$1; shift
+    git diff --name-only --relative "$_c" -- "$@" 2>/dev/null
+    git ls-files --others --exclude-standard -- "$@" 2>/dev/null
+    if [ -f docs/plan.md ] && git cat-file -e "$_c:./docs/plan.md" 2>/dev/null \
+        && [ "$(git show "$_c:./docs/plan.md" | plan_scope)" != "$(plan_scope < docs/plan.md)" ]; then
+      echo "docs/plan.md (a task, the acceptance, the proof, or the attack list, beyond ticking)"
+    fi
+  } | grep -v '^docs/decisions/sources/' | sed '/^$/d' | LC_ALL=C sort -u
 }
 # run_step DIR PROMPT: one headless session in DIR; its output goes to a log.
 run_step() {
@@ -98,10 +123,18 @@ while :; do
     exit 0
   fi
   printf 'advance: step %s: %s for %s (%s)\n' "$n" "$step" "$gate" "$why"
+  before=$(git rev-parse -q --verify HEAD 2>/dev/null)
   if ! run_step "$dir" "$prompt"; then
     printf 'advance: stopped: the %s session exited with an error. Its output is in %s\n' "$step" "$log"
     tail -n 5 "$log" 2>/dev/null | sed 's/^/  /'
     notify "The $step step for $gate exited with an error."; exit 1
+  fi
+  if [ "$step" = build ] && [ -n "$before" ]; then
+    decided=$(owner_only_changes "$before")
+    if [ -n "$decided" ]; then
+      printf 'advance: stopped for the owner: the build session changed what only the owner decides, so nothing more runs until they have read it:\n%s\nSee it with: git diff %s -- docs\n' "$decided" "$(git rev-parse --short "$before")"
+      notify "The build for $gate changed what only you decide: $(printf '%s' "$decided" | tr '\n' ';')"; exit 2
+    fi
   fi
   last="$step:$gate"
 done

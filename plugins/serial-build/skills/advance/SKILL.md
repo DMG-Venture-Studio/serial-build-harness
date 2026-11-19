@@ -28,8 +28,10 @@ every headless run gets), say so before starting, and name the usual choice,
 
 It stops when:
 
-- **the owner is needed** (exit 2): a plan to approve, a question a builder parked, or a demo to
-  run. Its last lines hold the question. Put it to the owner as it is written, consequence first;
+- **the owner is needed** (exit 2): a plan to approve, a question a builder parked, a demo to
+  run, or a build that changed what only the owner decides (the approved plan beyond ticking, a
+  decision record, an open question, the glossary, the design, the roadmap). Its last lines hold
+  the question or name the files. Put it to the owner as it is written, consequence first;
 - **nothing is left to run** (exit 0);
 - **a step made no progress, a session failed, or the step limit was reached** (exit 1). It names
   the log of the step that stopped it. Read that log's end and tell the owner what happened in
