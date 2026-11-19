@@ -27,7 +27,10 @@
 # open question, the glossary, the design, or the roadmap, the driver stops for
 # the owner and names each one, before the red lane spends anything on the
 # result. It then refuses to run anything until it is started with --reviewed,
-# which says the owner has read the change. A choice the session made only in
+# which says the owner has read the change. That refusal is recorded beside the
+# red lock in the repository's shared .git folder, keyed by the project's
+# physical path, so it survives a reboot and is the same whichever path the
+# project is reached by; only a real run with --reviewed clears it, never a dry run. A choice the session made only in
 # code is not seen by this check; the demo brief lists those for the owner (see
 # /serial-build:demo-brief).
 #
@@ -42,7 +45,8 @@
 #                   example, one that posts SB_ASK where the owner will see it).
 #                   Unset: the stop is only printed.
 #
-# Exit 0: nothing is left to run. 2: stopped for the owner. 1: stopped for any
+# Exit 0: nothing is left to run, or a plan draft started elsewhere is still
+# being written (it says which). 2: stopped for the owner. 1: stopped for any
 # other reason (a repeated step, a failed session, an unsaved draft, the limit).
 # Run from the project root. --dry-run prints the first step and runs nothing.
 set -u
@@ -65,14 +69,16 @@ case "$max" in ''|*[!0-9]*) usage ;; esac
 claude=${SB_CLAUDE:-claude}
 statedir=$(sb_state_dir)
 logs="$statedir/advance"
-hold="$statedir/advance-unreviewed"
+# The refusal to run after an unreviewed change: beside the red lock where there
+# is a repository (shared by every worktree, kept across reboots), else in the temp folder.
+if _l=$(sb_red_lock); then hold="${_l%/*}/advance-unreviewed-${_l##*/red-lock-}"; else hold="$statedir/advance-unreviewed"; fi
 stamp=$(date +%Y%m%d-%H%M%S)
 TAB=$(printf '\t')
 gate=- step=- log=
 field() { printf '%s\n' "$state" | sed -n "s/^$1: //p" | head -n 1; }
 # notify: tells the owner, where SB_NOTIFY says how; a failure there never stops the driver.
 notify() {
-  [ -n "${SB_NOTIFY:-}" ] || return 0
+  [ -n "${SB_NOTIFY:-}" ] && [ -z "$dry" ] || return 0
   SB_GATE=$gate SB_STEP=$step SB_ASK=$1 sh -c "$SB_NOTIFY" >/dev/null 2>&1 || echo "advance: the SB_NOTIFY command failed; the owner was not told by it."
 }
 # plan_scope: the part of a plan (on stdin) only the owner changes: its top block.
@@ -80,14 +86,14 @@ notify() {
 # a recorded answer is, since only next-step.sh answer writes one, on their words.
 plan_scope() {
   awk '/^## / { exit }
-    { s = tolower($0); gsub(/^[ \t*]+/, "", s); if (index(s, "ask first") == 1) next }
+    { s = tolower($0); gsub(/^[ \t*]+/, "", s); if (s ~ /^ask first([:*]|$)/) next }
     { if (match($0, /^[ \t]*- \[[xX]\]/)) $0 = substr($0, 1, RLENGTH - 2) " ]" substr($0, RLENGTH + 1)
       sub(/[ \t]+$/, ""); print }' | sed '/^$/d'
 }
 # owner_state: one "name<TAB>checksum" line per thing only the owner (or, for the
 # red record, only the red lane) changes, as it stands on disk now, committed or not.
 owner_state() {
-  { [ -d docs/decisions ] && find docs/decisions -maxdepth 1 -type f -name '*.md' 2>/dev/null
+  { [ -d docs/decisions ] && find docs/decisions -type f ! -path 'docs/decisions/sources/*' 2>/dev/null
     for _f in docs/open.md docs/glossary.md docs/design.md docs/roadmap.md; do [ -f "$_f" ] && printf '%s\n' "$_f"; done
   } | LC_ALL=C sort | while IFS= read -r _f; do printf '%s\t%s\n' "$_f" "$(sb_sum "$_f")"; done
   if [ -f docs/plan.md ]; then
@@ -113,7 +119,7 @@ run_step() {
 
 if [ -f "$hold" ]; then
   if [ -n "$reviewed" ]; then
-    rm -f "$hold"
+    [ -n "$dry" ] || rm -f "$hold"
   else
     printf 'advance: nothing runs yet: a build session changed what only the owner decides, and nobody has said the owner read it:\n%s\nWhen they have, start the driver again with --reviewed.\n' "$(cat "$hold")"
     notify "A build changed what only you decide, and the driver waits until you have read it: $(tr '\n' ';' < "$hold")"
@@ -127,10 +133,12 @@ while :; do
   gate=$(field gate) step=$(field step) why=$(field why) ask=$(field ask)
   case $code in
     0) ;;
-    2) printf 'advance: stopped for the owner at %s (%s): %s\n%s\n' "$step" "$gate" "$why" "$ask"
+    2) printf 'advance: stopped for the owner at %s (%s): %s\n%s\nHow: %s\n' "$step" "$gate" "$why" "$ask" "$(field run)"
        notify "$ask"; exit 2 ;;
     3) if [ "$step" = wait ]; then
-         printf 'advance: stopped: %s\n%s\n' "$why" "$(field run)"; exit 1
+         # A draft this run did not start (the handoff and the red lane start one
+         # in the background): nothing to run, and not a failure.
+         printf 'advance: nothing to run now: %s\n%s\n' "$why" "$(field run)"; exit 0
        fi
        printf 'advance: nothing to run now: %s\n' "$why"; exit 0 ;;
     *) printf '%s\n' "$state"; exit 1 ;;
@@ -167,6 +175,7 @@ while :; do
   if [ -n "$before" ]; then
     decided=$(owner_changes "$before" "$(owner_state)")
     if [ -n "$decided" ]; then
+      mkdir -p "${hold%/*}" 2>/dev/null
       printf '%s\n' "$decided" > "$hold"
       printf 'advance: stopped for the owner: the %s session changed what only the owner decides, so nothing more runs until they have read it:\n%s\n' "$step" "$decided"
       [ "$rc" -eq 0 ] || printf 'advance: that session also exited with an error; its output is in %s\n' "$log"

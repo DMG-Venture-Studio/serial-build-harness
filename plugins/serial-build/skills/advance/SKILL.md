@@ -14,9 +14,10 @@ context and reads where the work stands from the ledger.
 
 ## 1. Say what will run
 
-Run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/advance.sh" --dry-run` from the project root and tell the
-owner, in one line, the step it names and why. If it stops for the owner at once, say what it
-needs from them and end: there is nothing to run.
+Run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/advance.sh" --dry-run $ARGUMENTS` from the project root and
+tell the owner, in one line, the step it names and why. If it stops for the owner at once, say
+what it needs from them and end: there is nothing to run. A dry run starts no session, clears
+nothing, and notifies nobody.
 
 ## 2. Start it
 
@@ -37,7 +38,9 @@ It stops when:
   diff` and `git status` on `docs/`) and let them say what to keep. The driver then runs nothing
   until it is started with `--reviewed`; pass that only when the owner has said they read it,
   never on your own reading that the change looks fine;
-- **nothing is left to run** (exit 0);
+- **nothing is left to run** (exit 0), or a plan draft that another session started (the handoff
+  and the red lane start one in the background) is still being written: its line says so, and
+  names the command that drops a draft whose session died;
 - **the ledger calls for a step this run already ran, a session failed, a draft session ended
   without saving its plan, or the step limit was reached** (exit 1). It names the log folder.
   Read the end of the last log and tell the owner what happened in two or three lines; never
@@ -45,9 +48,12 @@ It stops when:
 
 ## 3. When the owner answers
 
-- A parked question: record their words with
+- A parked question (the step reads `ask`): record their words with
   `sh "${CLAUDE_PLUGIN_ROOT}/scripts/next-step.sh" answer "<their words, verbatim>"`, which commits
   them, then start the driver again only if they ask.
+- A blocking open question (the step reads `blocked`): it is answered through
+  `/serial-build:intake`, which records the decision and closes the question. The stop's "How:"
+  line names the way for every kind of stop; follow it, not this list, where they differ.
 - A plan to approve: `/serial-build:gate`, in this session or a fresh one.
 - A demo to run: the brief is under `## Demo brief` in `docs/plan.md`. When they say the
   acceptance sentence, run `/serial-build:handoff` in this session.

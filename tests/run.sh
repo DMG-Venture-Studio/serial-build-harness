@@ -548,7 +548,7 @@ printf 'exit 0\n' > "$proj/tests/check.sh"
 awk '{ print } /^Builds: The `tally` command/ { print ""; print "```"; print "# an example comment, not a heading"; print "```"; print ""; print "Later, it may read a second account." }' "$proj/docs/roadmap.md" > "$WORK/r" && cp "$WORK/r" "$proj/docs/roadmap.md"
 printf '\nSee `nowhere` for more.\n' >> "$proj/docs/design.md"
 # A demo brief drafted into the plan before red (issue 8) holds lines that look like the top block's.
-awk '/^## Red$/ { print "## Demo brief"; print ""; print "Proof that it runs:"; print ""; print "    false"; print ""; print "Tried to break it yourself:"; print "- one"; print "- two"; print "- three"; print "" } { print }' "$proj/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$proj/docs/plan.md"
+awk '/^## Red$/ { print "## Demo brief"; print ""; print "Proof that it runs:"; print ""; print "    false"; print ""; print "Tried to break it yourself:"; print "- one"; print "- two"; print "- three"; print "- [ ] Did it find your two transactions?"; print "" } { print }' "$proj/docs/plan.md" > "$WORK/p" && cp "$WORK/p" "$proj/docs/plan.md"
 ship match-one-month --accepted "It found my two missing transactions."
 expect "ship-gate ships, and exits 0 even when the canon check after it fails (review item 9)" 0 "the gate shipped, but the canon check above fails"
 sed '/See `nowhere`/d' "$proj/docs/design.md" > "$WORK/d" && cp "$WORK/d" "$proj/docs/design.md"
@@ -558,6 +558,7 @@ check "a demo brief in the plan adds no proof command and no Tried to break bull
 check "the done entry carries proof, the red test, what was tried, and the owner's words" 'grep -q "^    sh tests/check.sh" "$proj/docs/done.md" && grep -q "^    sh tests/red_empty.sh" "$proj/docs/done.md" && grep -q "^Tried to break: 2 attempts by the red lane" "$proj/docs/done.md" && grep -q "^Accepted: \"It found my two missing transactions.\"" "$proj/docs/done.md"'
 check "the plan is deleted and the gate left the roadmap" '[ ! -f "$proj/docs/plan.md" ] && ! grep -q "^### match-one-month" "$proj/docs/roadmap.md"'
 check "ship-gate listed the unticked task" 'printf "%s" "$out" | grep -q "Colour the output"'
+check "a checklist in the demo brief is not listed as an unticked task" '! printf "%s" "$out" | grep -q "Did it find your two transactions"' "$out"
 check "the shipped plan is kept: filed verbatim as a decision source the done entry names" 'f=$(ls "$proj"/docs/decisions/sources/plan-match-one-month-*.md 2>/dev/null) && grep -q "Colour the output" "$f" && grep -q "^## Red" "$f" && grep -q "^Plan: the plan as shipped is filed as the decision source .plan-match-one-month-" "$proj/docs/done.md"'
 script "$proj" check-canon.sh
 expect "the ledger passes the canon check after shipping" 0 "PASS  every done entry is as ship-gate.sh wrote it"
@@ -1131,6 +1132,14 @@ hook "$ns2" session-start.sh '{"session_id":"n2","source":"startup"}'
 case "$out" in *json-parser-crash*) no "session start does not name a tooling fix as the next gate" "$out" ;; *) ok "session start does not name a tooling fix as the next gate" ;; esac
 printf '# Roadmap\n\n## Stage: one\n\nGoal: a first gate.\n' > "$ns2/docs/roadmap.md"; commit "$ns2" "an empty roadmap"
 step2; expect "a roadmap with no pending gate: nothing to run" 3 "step: none"
+for head in 'Later:' '**Later:**' 'Later (one line each, in order):' 'later: these, in order'; do
+  printf '# Roadmap\n\n## Stage: one\n\nGoal: a first gate.\n\n%s\n- first-gate: prints a greeting\n' "$head" > "$ns2/docs/roadmap.md"
+  step2; expect "a one-line gate is found under the heading \"$head\"" 0 "step: intake"
+done
+printf '# Roadmap\n\n## Stage: one\n\nGoal: a first gate.\n\nLater, it may read a second account.\n\n- note: not a gate\n' > "$ns2/docs/roadmap.md"
+step2; expect "a sentence that starts with Later is not a list of gates" 3 "step: none"
+printf '# Roadmap\n\n## Tooling fixes\n\n- json-parser-crash: the parser crashes on a blank key.\n\n## Stage: two\n\nGoal: more.\n\n### second-gate\n\nBuilds: more.\n' > "$ns2/docs/roadmap.md"; commit "$ns2" "a stage after the tooling fixes"
+step2; expect "a stage written after the tooling-fixes section is still seen" 0 "gate: second-gate"
 printf '# Roadmap\n\n## Stage: one\n\nGoal: a first gate.\n\n### first-gate\n\nBuilds: a greeting.\n' > "$ns2/docs/roadmap.md"
 step2; expect "a gate written out but not committed stops for the owner, and is never drafted from a commit that lacks it" 2 "not committed"
 script "$ns2" plan-draft.sh start first-gate
@@ -1144,8 +1153,15 @@ step2; expect "a checklist and an Ask-first sentence inside the demo brief are n
 script "$ns2" next-step.sh mark-brief; commit "$ns2" "brief marked"
 step2; expect "(that gate reaches the demo)" 2 "step: demo"
 echo 'y = 1' > "$ns2/src/new.py"
-step2; expect "a new source file after the mark makes the brief stale before it is even committed" 0 "step: demo-brief"
+step2; expect "a new file after the mark is put to the owner by name, not sent to a brief refresh that cannot mark" 2 "step: untracked"
+check "the new file is named" 'printf "%s" "$out" | grep -q "^ask: .*src/new.py"' "$out"
 rm "$ns2/src/new.py"
+: > "$ns2/.DS_Store"; mkdir -p "$ns2/src" && : > "$ns2/src/.DS_Store"
+step2; expect "a file browser's litter does not knock a gate back from the demo" 2 "step: demo"
+rm -f "$ns2/.DS_Store" "$ns2/src/.DS_Store"
+echo 'x = 9' > "$ns2/src/app.py"
+step2; expect "a tracked change after the red lane cleared is committed first, never sent to the brief" 0 "step: commit"
+git -C "$ns2" checkout -q -- src/app.py
 script "$ns2" next-step.sh mark-brief; script "$ns2" next-step.sh mark-brief
 check "renewing the mark keeps one blank line above it, however often" '[ "$(awk "/^## Demo brief/ { on = 1; next } on && /^Refreshed/ { print n + 0; exit } on { n++ }" "$ns2/docs/plan.md")" = 1 ] && [ "$(grep -c "^Refreshed: red clear at " "$ns2/docs/plan.md")" -eq 1 ]' "$(sed -n '/^## Demo brief/,/^## Red/p' "$ns2/docs/plan.md")"
 ns_red_stop='
@@ -1157,14 +1173,24 @@ Red run: 2026-10-03, 1 attempts, 1 findings. Source: `red-first-gate-2026-10-02`
 
 Red run: 2026-10-04, 1 attempts, 1 findings. Source: `red-first-gate-2026-10-02`. Delta run.
 '
-{ ns_plan | tick; printf '%s' "$ns_red_stop"; } > "$ns2/docs/plan.md"; commit "$ns2" "two fix rounds, findings still open"
+ns_plan | tick > "$ns2/docs/plan.md"; commit "$ns2" "built"
+printf '%s' "$ns_red_stop" >> "$ns2/docs/plan.md"
+step2; expect "a red run recorded but not committed is the owner's to place, never a build" 2 "step: red-commit"
+commit "$ns2" "two fix rounds, findings still open"
 step2; expect "two fix rounds that still found failures are the owner's choice, and no third red run is bought" 2 "step: red-stop"
 echo 'z = 1' >> "$ns2/src/app.py"
-step2; expect "a red run recorded but not committed is the owner's to place, never a build" 2 "step: red-commit"
+step2; expect "a builder's uncommitted work beside a committed red record is a commit, not the red lane's question" 0 "step: commit"
 git -C "$ns2" checkout -q -- src/app.py
 ns_plan | sed 's/^Blocking open questions: none/Blocking open questions: guest-name, whether an empty name is a guest/' > "$ns2/docs/plan.md"
 printf '# Open questions\n\n## guest-name\n\nIs an empty name a guest?\n' > "$ns2/docs/open.md"; commit "$ns2" "a blocking open question"
 step2; expect "a blocking open question the plan names, still open, stops for the owner before any build" 2 "blocked on: guest-name"
+check "that stop is named blocked, and says it is answered through intake" 'printf "%s" "$out" | grep -q "^step: blocked" && printf "%s" "$out" | grep -q "^run: .*serial-build:intake"' "$out"
+ns_plan | sed 's/^Blocking open questions: none/Blocking open questions: none (the guest-name question does not block this gate)/' > "$ns2/docs/plan.md"
+step2; expect "\"none\", with a remark that happens to name an open question, blocks nothing" 0 "step: build"
+ns_plan | awk '/^Blocking open questions:/ { print "Blocking open questions: pricing, what a seat costs,"; print "  guest-name, whether an empty name is a guest"; next } { print }' > "$ns2/docs/plan.md"
+step2; expect "a blocking line that wraps is read to its end" 2 "blocked on: guest-name"
+ns_plan | awk '{ print } /^- \[ \] Refuse/ { print "      Ask first-time users for their name before refusing." }' > "$ns2/docs/plan.md"
+step2; expect "a task line that happens to start with the words Ask first is not a parked question" 0 "step: build"
 ns_plan | awk 'NR == 1 { print; print ""; print "**Ask first:** greet a guest?"; next } { print }' > "$ns2/docs/plan.md"; commit "$ns2" "a parked question, in bold"
 step2; expect "a parked question is read however it is dressed" 2 "ask: greet a guest?"
 script "$ns2" next-step.sh answer "No."
@@ -1183,6 +1209,10 @@ while [ $# -gt 0 ]; do [ "$1" = -p ] && prompt=${2:-}; shift; done
 case "${FAKE_MODE:-}" in idle) exit 0 ;; fail) echo "the model was unreachable"; exit 1 ;; esac
 case "${FAKE_MODE:-}:$prompt" in
   nodraft:*) exit 0 ;;
+  subrecord:*"unticked tasks"*)
+    sed 's/^- \[ \] Refuse/- [x] Refuse/' docs/plan.md > p.tmp && mv p.tmp docs/plan.md
+    mkdir -p docs/decisions/2026 && echo "An empty name is a guest." > docs/decisions/2026/guest-greeting.txt
+    git add -A && git commit -qm "build, with a decision tucked in a subfolder"; exit 0 ;;
   dirtyred:/serial-build:red) echo 'junk = 1' > src/junk.py; exit 0 ;;
   selfanswer:*"unticked tasks"*)
     awk 'NR == 1 { print; print ""; print "Answered: greet a guest? The owner said: \"yes\""; next } { sub(/^- \[ \] Refuse/, "- [x] Refuse"); print }' docs/plan.md > p.tmp && mv p.tmp docs/plan.md
@@ -1268,6 +1298,17 @@ check "the failed session is named too" 'printf "%s" "$out" | grep -q "also exit
 : > "$FAKE_LOG"; drive "$WORK/dv5"
 expect "the next run starts nothing until the owner has read the change" 2 "start the driver again with --reviewed"
 check "no session was paid for while the change is unread" '[ ! -s "$FAKE_LOG" ]' "$(cat "$FAKE_LOG")"
+drive "$WORK/dv5" --reviewed --dry-run
+expect "a dry run with --reviewed shows the next step" 0 "would run red"
+drive "$WORK/dv5"
+expect "and does not count as the owner having read the change" 2 "start the driver again with --reviewed"
+rm -rf "$TMPDIR"/serial-build-*/"$(printf '%s' "$WORK/dv5" | cksum | awk '{print $1}')"
+drive "$WORK/dv5"
+expect "the hold outlives a cleaned temp folder" 2 "start the driver again with --reviewed"
+ln -s "$WORK/dv5" "$WORK/dv5link"
+drive "$WORK/dv5link"
+expect "the hold is the same whichever path the project is reached by" 2 "start the driver again with --reviewed"
+check "none of those runs started a session" '[ ! -s "$FAKE_LOG" ]' "$(cat "$FAKE_LOG")"
 drive "$WORK/dv5" --reviewed --max-steps 1
 expect "once the owner has read it, the driver goes on" 1 "limit of 1 steps"
 check "and the step after the build was the red lane" '[ "$(grep -c . "$FAKE_LOG")" -eq 1 ] && grep -q -- "-p /serial-build:red$" "$FAKE_LOG"' "$(cat "$FAKE_LOG")"
@@ -1282,6 +1323,8 @@ expect "a build that records an answer for the owner is caught" 2 "or a recorded
 fresh "$WORK/dv9"; export FAKE_MODE=redself; drive "$WORK/dv9"; unset FAKE_MODE
 expect "a build that writes its own red record is caught, so the gate cannot skip the red lane" 2 "which only /serial-build:red writes"
 check "nothing ran after that build" '[ "$(grep -c . "$FAKE_LOG")" -eq 1 ]' "$(cat "$FAKE_LOG")"
+fresh "$WORK/dv12"; export FAKE_MODE=subrecord; drive "$WORK/dv12"; unset FAKE_MODE
+expect "a decision a build writes anywhere under the decisions folder is caught, whatever its name" 2 "docs/decisions/2026/guest-greeting.txt"
 ns_project "$WORK/dv10"; ns_plan | awk '{ print } /^- \[ \] Refuse/ { print "  - [ ] and say which field is empty" }' > "$WORK/dv10/docs/plan.md"; commit "$WORK/dv10" "Plan: first-gate"; : > "$FAKE_LOG"
 export FAKE_MODE=nested; drive "$WORK/dv10" --max-steps 1; unset FAKE_MODE
 expect "ticking a nested task, or leaving a trailing space, is not a change to the plan" 1 "limit of 1 steps"
@@ -1289,7 +1332,7 @@ ns_project "$WORK/dv11"; : > "$FAKE_LOG"
 export FAKE_MODE=nodraft; drive "$WORK/dv11"; unset FAKE_MODE
 expect "a draft session that ends without saving stops the driver, naming the way out" 1 "ended without saving a plan"
 : > "$FAKE_LOG"; drive "$WORK/dv11"
-expect "and the next run does not report it as nothing left to do" 1 "was started and is not saved"
+expect "the next run says the draft is unsaved and names the way out; a draft it did not start is not a failure" 0 "drop first-gate"
 check "nor pay for another session" '[ ! -s "$FAKE_LOG" ]' "$(cat "$FAKE_LOG")"
 script "$WORK/dv11" plan-draft.sh drop first-gate
 ln -s "$dv2" "$WORK/dv2link"; : > "$FAKE_LOG"

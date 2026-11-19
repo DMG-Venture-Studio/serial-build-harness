@@ -34,8 +34,10 @@ if [ -f "$plan" ]; then
 elif [ -f "$roadmap" ]; then
   # Gates end where the tooling fixes begin, and a one-line gate is a bullet of
   # a stage's "Later:" list: a tooling fix is written as the same kind of bullet.
-  gate=$(awk '/^## Tooling fixes/ { exit } /^### / { print substr($0, 5); exit }' "$roadmap")
-  later=$(awk '/^## Tooling fixes/ { exit } /^Later:/ { on = 1; next } /^#/ { on = 0 }
+  gate=$(awk '/^## Tooling fixes/ { skip = 1; next } /^## / { skip = 0 } !skip && /^### / { print substr($0, 5); exit }' "$roadmap")
+  later=$(awk '/^## Tooling fixes/ { skip = 1; next } /^## / { skip = 0 } skip { next }
+    { t = tolower($0); gsub(/^[ \t*]+/, "", t) }
+    t ~ /^later[ \t]*(\([^)]*\))?[ \t]*:/ { on = 1; next } /^#/ { on = 0 }
     on && /^- [a-z0-9][a-z0-9-]*: / { sub(/^- /, ""); sub(/:.*/, ""); print; exit }' "$roadmap")
   if [ -n "$gate" ]; then
     printf 'serial-build: no active plan. The next roadmap gate is %s; plan it with /serial-build:gate.\n' "$gate"

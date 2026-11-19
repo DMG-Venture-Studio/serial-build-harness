@@ -6,9 +6,9 @@
 #   next-step.sh [project root]
 #     Prints the step as "field: value" lines:
 #       gate:  the gate the step is for, or "-"
-#       step:  scope | intake | draft | gate | ask | build | commit | red |
-#              red-commit | red-stop | red-lock | demo-brief | demo |
-#              tooling-fix | wait | none
+#       step:  scope | intake | draft | gate | ask | blocked | build | commit |
+#              red | red-commit | red-stop | red-lock | untracked | demo-brief |
+#              demo | tooling-fix | wait | none
 #       owner: yes when only the product owner can take the step, else no
 #       why:   the state that makes this the step, in one line
 #       run:   the command or instruction that takes it
@@ -54,7 +54,7 @@ commit_plan() {
 # The plan's top block. ASKED is an awk test for a parked question's line, read
 # loosely: "Ask first", "ask first:", "**Ask first:**", or indented.
 top() { awk '/^## / { exit } { print }' "$plan"; }
-ASKED='function asked(s) { s = tolower(s); gsub(/^[ \t*]+/, "", s); return index(s, "ask first") == 1 }'
+ASKED='function asked(s) { s = tolower(s); gsub(/^[ \t*]+/, "", s); return s ~ /^ask first([:*]|$)/ }'
 
 if [ "$mode" = park ]; then
   [ -n "${1:-}" ] || refuse 'usage: next-step.sh park "<the question, its options, and what happens on each>"'
@@ -80,8 +80,11 @@ fi
 # red_clear: the red lane's record lets the gate ship (red-status.sh remembers
 # its verdict for an unchanged tree, so asking twice does not re-run it).
 red_clear() { sh "$SB_PLUGIN/scripts/red-status.sh" "$SB_ROOT" >/dev/null 2>&1; }
-# Files changed or new outside docs/, which the red lane and the brief have not seen.
-code_changes() { sb_changed_files | grep -v '^docs/'; }
+# Files changed or new outside docs/, which the red lane and the brief have not
+# seen. The folder litter a file browser leaves is not the project's work.
+code_changes() { sb_changed_files | grep -v -e '^docs/' -e '^\.DS_Store$' -e '/\.DS_Store$'; }
+# The red lane's record in a plan on stdin, as one checksum.
+red_record() { LC_ALL=C awk -f "$SB_SCRIPTS/red-record.awk" | grep -v "^TRIED" | sb_hash; }
 
 if [ "$mode" = mark-brief ]; then
   [ -f "$plan" ] && grep -q '^## Demo brief' "$plan" || refuse "docs/plan.md has no \"## Demo brief\" section to mark"
@@ -129,12 +132,25 @@ if [ -f "$plan" ]; then
       "sh \"$SB_PLUGIN/scripts/next-step.sh\" answer \"<the owner's words, verbatim>\"" "${asked:-see the Ask first line in docs/plan.md}"
   fi
   # A blocking open question the plan names, still open: the build waits on the owner.
-  blocking=$(top | sed -n 's/^Blocking open questions:[[:space:]]*//p' | head -n 1)
-  if [ -n "$blocking" ] && [ -f docs/open.md ]; then
-    still=$(B=$blocking awk 'BEGIN { b = ENVIRON["B"]; gsub(/[^a-z0-9-]/, " ", b); b = " " b " " }
-      /^## / { q = substr($0, 4); if (index(b, " " q " ")) printf "%s ", q }' docs/open.md)
+  # The line reads "Blocking open questions: <slug, what it is>, <slug, ...> | none"
+  # and may wrap onto indented lines; each item's first word is its slug.
+  if [ -f docs/open.md ]; then
+    still=$(top | awk -v openf=docs/open.md '
+      BEGIN { while ((getline l < openf) > 0) if (l ~ /^## /) open[substr(l, 4)] = 1 }
+      /^Blocking open questions:/ { v = $0; sub(/^Blocking open questions:[ \t]*/, "", v); on = 1; next }
+      on && /^[ \t]+[^ \t]/ { v = v " " $0; next }
+      on { on = 0 }
+      END {
+        first = v; sub(/^[ \t`*]+/, "", first)
+        if (tolower(first) ~ /^none([^a-z0-9-]|$)/) exit
+        n = split(v, item, /[,;]/)
+        for (i = 1; i <= n; i++) {
+          s = item[i]; sub(/^[ \t`*]+/, "", s)
+          if (match(s, /^[a-z0-9][a-z0-9-]*/)) { s = substr(s, 1, RLENGTH); if (s in open) printf "%s ", s }
+        }
+      }')
     if [ -n "$still" ]; then
-      say ask yes "the plan names blocking open questions that are still open: ${still% }" \
+      say blocked yes "the plan names blocking open questions that are still open: ${still% }" \
         "answer each through /serial-build:intake, which records the decision and closes the question" \
         "The plan for $gate is blocked on: ${still% }. Each is an open question with a recommendation; what do you decide?"
     fi
@@ -147,7 +163,14 @@ if [ -f "$plan" ]; then
   if in_git; then
     dirty=$(sb_changed_files | grep -c .)
     if [ "$dirty" -gt 0 ] && ! red_clear; then
-      if grep -q '^Red run:' "$plan"; then
+      # The red lane's own uncommitted work: its record in the plan, a test under
+      # red.test_paths, or the raw output it filed. Anything else is the builder's.
+      reds=
+      [ "$(red_record < "$plan")" = "$(git show "HEAD:./$plan" 2>/dev/null | red_record)" ] || reds=1
+      sb_changed_files | grep -q '^docs/decisions/sources/' && reds=1
+      cfg=$(sb_flatten < .claude/serial-build.json 2>/dev/null)
+      if sb_get "$cfg" 'red.test_paths.#' >/dev/null 2>&1 && sb_changed_files | sb_filter "$cfg" red.test_paths | grep -q .; then reds=1; fi
+      if [ -n "$reds" ] && grep -q '^Red run:' "$plan"; then
         say red-commit yes "the red lane recorded a run and $dirty file(s) are not committed; it asks the owner before committing failing tests where they would fail the default branch" \
           "commit the red lane's tests, raw output and plan where the owner says, then /serial-build:red goes on to the fix" \
           "The red lane's findings for $gate are recorded but not committed, and its failing tests will fail the checks until the fixes land. Commit them on this branch, or on a new branch for the gate?"
@@ -170,6 +193,18 @@ if [ -f "$plan" ]; then
     fi
     say red no "the gate is built and the red lane's record is not clear" "/serial-build:red"
   fi
+  # Work outside docs/ that is not committed: the brief cannot be refreshed on
+  # it, so it is committed first; files that are only new are the owner's to
+  # commit, ignore, or delete (a demo's own output, say).
+  if in_git && [ -n "$(code_changes)" ]; then
+    new=$(git ls-files --others --exclude-standard -- . ':(exclude)docs' 2>/dev/null | grep -v -e '^\.DS_Store$' -e '/\.DS_Store$')
+    if [ "$(code_changes | grep -c .)" -gt "$(printf '%s\n' "$new" | grep -c .)" ]; then
+      say commit no "the red lane is clear, and files outside docs/ changed since and are not committed" "commit the gate's work per the project's commit policy"
+    fi
+    say untracked yes "the gate is built and attacked, and new files outside docs/ are not committed: $(printf '%s' "$new" | tr '\n' ' ')" \
+      "commit, ignore (in .gitignore), or delete each one; the demo brief is refreshed only on committed work" \
+      "These new files are not committed: $(printf '%s' "$new" | tr '\n' ' '). Should each be committed, ignored, or deleted?"
+  fi
   ref=$(sed -n 's/^Refreshed: red clear at \([0-9a-f]\{7,40\}\)\.$/\1/p' "$plan" | tail -n 1)
   if in_git; then
     [ -n "$ref" ] && git cat-file -e "$ref^{commit}" 2>/dev/null && git diff --quiet "$ref" -- . ':(exclude)docs' 2>/dev/null && [ -z "$(code_changes)" ] || ref=
@@ -188,17 +223,21 @@ fi
 [ -f "$roadmap" ] || say scope yes "there is no docs/roadmap.md" "/serial-build:scope" "The project has a config but no roadmap; scope it?"
 # Gates end where the tooling fixes begin, and a one-line gate is a bullet of a
 # stage's "Later:" list: a tooling fix is written as the same kind of bullet.
-first=$(awk '/^## Tooling fixes/ { exit } /^### / { print substr($0, 5); exit }' "$roadmap")
-later=$(awk '/^## Tooling fixes/ { exit } /^Later:/ { on = 1; next } /^#/ { on = 0 }
+# The tooling-fixes section is skipped, not taken as the end: a stage may follow it.
+# A "Later" heading is read loosely ("Later:", "**Later:**", "Later (in order):").
+first=$(awk '/^## Tooling fixes/ { skip = 1; next } /^## / { skip = 0 } !skip && /^### / { print substr($0, 5); exit }' "$roadmap")
+later=$(awk '/^## Tooling fixes/ { skip = 1; next } /^## / { skip = 0 } skip { next }
+  { t = tolower($0); gsub(/^[ \t*]+/, "", t) }
+  t ~ /^later[ \t]*(\([^)]*\))?[ \t]*:/ { on = 1; next } /^#/ { on = 0 }
   on && /^- [a-z0-9][a-z0-9-]*: / { sub(/^- /, ""); sub(/:.*/, ""); print; exit }' "$roadmap")
 if [ -n "$first" ]; then
   gate=$first
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1 && in_git; then
     # A plan is drafted from the last commit, so a gate not committed yet cannot be drafted.
     if ! git show "HEAD:./$roadmap" 2>/dev/null | grep -qx "### $first"; then
-      say intake yes "the gate $first is written out in the roadmap but not committed; intake waits for the owner before committing a new glossary entry or a contradiction of what they stated" \
-        "commit docs/roadmap.md once the owner has approved what intake named" \
-        "The gate $first is written out but not committed. Intake holds a commit for you in two cases: a new glossary entry, or something that contradicts what you stated. Do you approve what it named?"
+      say intake yes "the gate $first is in the roadmap but that change is not committed, and a plan is drafted from the last commit" \
+        "commit docs/roadmap.md once the owner has approved the change (intake holds a commit for a new glossary entry or a contradiction of what they stated; a gate moved back by ship-gate.sh --regress is committed with the handoff)" \
+        "The gate $first is written out in the roadmap, but that change is not committed. Is it right as written, so it can be committed and planned?"
     fi
     sh "$SB_PLUGIN/scripts/plan-draft.sh" status "$first" >/dev/null 2>&1
     case $? in
