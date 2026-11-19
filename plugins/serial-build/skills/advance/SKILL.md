@@ -1,7 +1,7 @@
 ---
 name: advance
 description: Start the driver, which runs every step of the gate loop that needs no product owner (writing out the next gate, drafting its plan, building, the red lane, the demo brief's refresh), each in a fresh headless session, and stops when the owner is needed. Use when the owner asks to advance the work, run the loop, or build unattended.
-argument-hint: Optional --max-steps N, or --dry-run to see the first step only
+argument-hint: Optional --max-steps N, --dry-run to see the first step only, or --reviewed once the owner has read a change the driver stopped on
 disable-model-invocation: true
 ---
 
@@ -28,14 +28,20 @@ every headless run gets), say so before starting, and name the usual choice,
 
 It stops when:
 
-- **the owner is needed** (exit 2): a plan to approve, a question a builder parked, a demo to
-  run, or a build that changed what only the owner decides (the approved plan beyond ticking, a
-  decision record, an open question, the glossary, the design, the roadmap). Its last lines hold
-  the question or name the files. Put it to the owner as it is written, consequence first;
+- **the owner is needed** (exit 2): a plan to approve, a question a builder parked, a choice the
+  red lane leaves to them, or a demo to run. Its last lines hold the question. Put it to the
+  owner as it is written, consequence first;
+- **a build changed what only the owner decides** (also exit 2): the approved plan beyond
+  ticking and parking a question, the red lane's record, a decision record, an open question,
+  the glossary, the design, or the roadmap. It names each one. Show the owner the change (`git
+  diff` and `git status` on `docs/`) and let them say what to keep. The driver then runs nothing
+  until it is started with `--reviewed`; pass that only when the owner has said they read it,
+  never on your own reading that the change looks fine;
 - **nothing is left to run** (exit 0);
-- **a step made no progress, a session failed, or the step limit was reached** (exit 1). It names
-  the log of the step that stopped it. Read that log's end and tell the owner what happened in
-  two or three lines; never restart the driver to retry a step that just failed.
+- **the ledger calls for a step this run already ran, a session failed, a draft session ended
+  without saving its plan, or the step limit was reached** (exit 1). It names the log folder.
+  Read the end of the last log and tell the owner what happened in two or three lines; never
+  restart the driver to retry a step that just failed.
 
 ## 3. When the owner answers
 

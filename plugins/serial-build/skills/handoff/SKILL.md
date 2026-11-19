@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Close a session so a fresh agent picks up the work at once. Re-runs every proof in docs/done.md, refuses to move a gate while a red finding still reproduces, moves an accepted gate to done, and records state in the gate ledger. Use at the end of a working session or when the product owner has accepted a gate.
+description: Close a session so a fresh agent picks up the work at once. Re-runs every proof in docs/done.md, refuses to move a gate while a red finding still reproduces, moves an accepted gate to done, and records state in the gate ledger. Use when the product owner has said a gate's acceptance sentence, or when they ask to close the session. Never start it from a session nobody is watching, such as an unattended build.
 argument-hint: What the next session will be used for
 ---
 

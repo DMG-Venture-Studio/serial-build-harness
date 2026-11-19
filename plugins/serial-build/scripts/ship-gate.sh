@@ -311,7 +311,8 @@ sum=$(cksum < "$entryf" | awk '{print $1 "-" $2}')
 } >> "$done"
 
 remove_section "$roadmap" "###" "$slug"
-unticked=$(grep '^- \[ \]' "$plan")
+# The red task is the red lane's, and its record is what just let the gate ship.
+unticked=$(grep '^- \[ \]' "$plan" | grep -v 'serial-build:red')
 mkdir -p docs/decisions/sources
 if { printf '# Source: the plan for %s, as shipped\n\nFiled %s by ship-gate.sh when the gate shipped. The plan as it stood, verbatim: its tasks, its demo brief, and the red lane'"'"'s record.\n\n---\n\n' "$slug" "$today"
      cat "$plan"; } > "docs/decisions/sources/$plansrc.md"; then
