@@ -234,7 +234,10 @@ The record counts only once committed. Commit the imported tests, the raw output
 Red section as "Red: <gate-slug>, <n> findings". The tests are committed failing, on purpose, so:
 if the gate is being built on its own branch, commit there. If the work is on the default branch,
 say before committing that continuous integration and any pre-commit test hook will fail until
-the fixes land, and ask the owner whether to commit now or on a new branch for the gate.
+the fixes land, and ask the owner whether to commit now or on a new branch for the gate. With no
+owner to ask (a headless run, such as one the driver started), never commit failing tests to the
+default branch: create the branch `gate/<gate-slug>` from where you stand, commit there, and say
+so in the report's first line, so the owner learns where the gate's work now lives.
 
 Run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh" --record` before this commit, never after:
 a committed run cannot be corrected. After committing, run

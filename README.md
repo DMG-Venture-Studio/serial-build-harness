@@ -330,7 +330,8 @@ whose goal was to make things fail, found sixteen problems.
 
 The failing tests are committed on purpose, which means continuous integration and any
 pre-commit test hook will fail until the fix lands. Build each gate on its own branch if that
-matters; on the default branch, `/serial-build:red` asks before committing them. While a red test
+matters; on the default branch, `/serial-build:red` asks before committing them, and a headless
+run with nobody to ask commits them on a new branch, `gate/<gate-slug>`, and says so. While a red test
 fails, the stop hook points it out once per change to the code, not at every turn.
 
 ## Coupling and footprint
