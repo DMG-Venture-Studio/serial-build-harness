@@ -34,6 +34,10 @@ case "$gate" in *[!a-z0-9-]*) refuse "a gate slug is lowercase letters, digits, 
 SB_ROOT=$(sb_project_root)
 git -C "$SB_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || refuse "$SB_ROOT is not in a git work tree"
 cd "$SB_ROOT" || exit 1
+# The draft's folder is keyed by the project's path, so name the project by its
+# physical path: reached through a symlink, start and save would otherwise look
+# in two different folders.
+SB_ROOT=$(pwd -P)
 # Run from a draft worktree itself, act for the checkout it was cut from: the
 # worktree that has the branch the draft branched from checked out, else the main
 # one. Run from any other checkout (the project may itself be a linked
@@ -57,6 +61,7 @@ base_of() { git log -1 --format=%B "$branch" 2>/dev/null | sed -n 's/^Draft-base
 case "$mode" in
   start)
     [ -f docs/roadmap.md ] && grep -qx "### $gate" docs/roadmap.md || refuse "docs/roadmap.md has no written-out gate \"### $gate\"; write it out through /serial-build:intake first"
+    git show "HEAD:./docs/roadmap.md" 2>/dev/null | grep -qx "### $gate" || refuse "the gate $gate is written out in docs/roadmap.md but not committed; the draft is cut from the last commit, so commit the roadmap first"
     [ -f docs/plan.md ] && [ "$(awk '/^# /{print substr($0, 3); exit}' docs/plan.md)" = "$gate" ] && refuse "$gate is the active plan already"
     has_branch && refuse "a draft of $gate already exists (plan-draft.sh status $gate); drop it first to start over"
     git worktree prune 2>/dev/null

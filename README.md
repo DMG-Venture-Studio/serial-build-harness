@@ -90,11 +90,38 @@ Several other plugins ship a skill called `handoff`, so when names collide use t
 **Intake** (`/serial-build:intake <finding>`) runs whenever a bug, idea, review, or handoff from
 another session arrives. It never edits the active plan; findings queue behind it.
 
-Each step runs in a fresh session and ends by naming the next command (for example "next:
-`/clear`, then `/serial-build:red`"). The ledger holds everything a cold start needs, and a
-session that carries a whole gate's context pays for all of it on every call. The one exception
-is the demo and the handoff, which share a session because the handoff ships on the owner's
-words said in it.
+Each step runs in a fresh session. The ledger holds everything a cold start needs, and a
+session that carries a whole gate's context pays for all of it on every call. Two hand-offs do
+not start fresh, because the session is small and nothing is gained: a clean red run goes
+straight on to the demo brief's refresh, and the demo goes straight on to the handoff, which
+ships on the owner's words said in that session.
+
+**The owner decides; nobody types `/clear`.** Most of the waiting in this loop used to be the
+owner clearing the context and typing the next command, not deciding anything. So the steps
+that need no owner can be run by a driver, started with `/serial-build:advance`:
+
+```
+/serial-build:advance   ->  writes out the next gate, drafts its plan      ->  stops: approve the plan
+/serial-build:advance   ->  builds, red lane, refreshes the demo brief     ->  stops: run the demo
+```
+
+The driver runs each step as its own headless Claude Code process (`claude -p`), so each still
+starts with a fresh context. (A red-lane session may also start the next plan's draft in the
+background, as it does when run by hand.) Before every step it asks `next-step.sh`, which reads the ledger
+and says what is next and whether the owner is needed. It stops for a plan to approve, a demo
+to run, or a question a builder parked because only the owner can answer it. A builder is
+told to park such a question and never to guess; that is an instruction, so the driver also
+checks after every build, and stops for the owner if the session changed the approved plan
+beyond ticking tasks or wrote a decision record, an open question, the glossary, the design, or
+the roadmap, or the red lane's record. It compares with what was on disk when the session
+started, checks a session that failed as well as one that ended well, and then runs nothing
+until the owner has read the change and it is started with `--reviewed` (a dry run never
+counts as that). A choice made only in
+code is not seen by that check: the demo brief lists the choices the build made, so the owner
+reads them before accepting. No step is paid for twice in one run, whatever ran between, and
+when the red lane's own rule says the owner must choose (two fix rounds that still found
+failures), the driver stops there instead of buying another run. Each step still names the
+next command, so the loop works by hand exactly as before.
 
 ## What is in the plugin
 
@@ -108,6 +135,7 @@ words said in it.
 | `/serial-build:red` | Snapshots the project, sends the red-breaker agent at the active gate in its own git worktree with only what is on disk, and verifies nothing outside it changed. Brings back only test files, files the agent's raw output, re-runs each finding itself, and records the findings in the plan. Then it chains the loop through fresh agents: the red-fixer fixes each kind of bug once, a delta run attacks only what the fixes changed, and the session stops for the owner only for a finding that may be wrong, a second delta run with findings (as a one-line choice: a structural change that removes the whole class, or accepting the risk), or a clean run. A partial run on finished slices can use a wait outside the repository. A run may brief only some lanes: a lane whose paths are only check tooling is skipped when the gate's last pre-push adversarial report on them approved, and the record names the skip. | Gates are proven green by the session that built them, which covers only the scenario it wrote the checks for. |
 | `/serial-build:tooling-fix` | Fixes the check-tooling repairs intake queued under "Tooling fixes" in the roadmap, in one pass of their own: the red-fixer fixes each kind once in a worktree outside the project, the adversarial reviewer reviews the change (two rounds, then the owner's one-line choice), and it merges only while no gate is active, after which every shipped gate's proof is re-run. | Folded into the next product gate, tooling repairs put the check code back under that gate's red lane and let a repair that keeps failing block an unrelated ship: in the source project, eleven of them were about to ride with a gate on run fencing. |
 | `/serial-build:demo-brief` | Writes the owner's instructions for running the demo: what to do, what to look for, how to try to break it, and what to report back. Every fact comes from running something now, not from memory. | The owner runs the wrong thing or is told to expect the wrong result, and a pass means nothing. |
+| `/serial-build:advance` | Starts the driver in the background and reports where it stopped. The driver runs every step that needs no owner (writing out the next gate, drafting its plan, building, the red lane, the demo brief's refresh), each in a fresh headless session, and stops for a plan to approve, a demo to run, or a question a builder parked. Only the owner can start it; a session never does on its own judgement. | The owner clears the context and types the next command at every step, and waits on that, not on a decision. |
 | `/serial-build:handoff` | Re-runs every proof in done through `run-proofs.sh`, moving a gate whose proof fails back to the roadmap. Checks the red lane's record and ships an accepted gate through the ship-gate script. After a ship, starts drafting the next gate's plan in the background without asking (the owner still approves the plan when it is taken), and names the next command. | "Done" stays done on faith, and the next session re-reads the whole chat to find out where things are. |
 
 ### Agents
@@ -145,7 +173,9 @@ All live in the plugin's `scripts/` folder and run from the project root with `s
 | Script | What it does |
 |---|---|
 | `run-proofs.sh` | The handoff's audit. Re-runs every Proof command in `docs/done.md` and reports each result (`Manual:` entries as not re-run), names any proof that left the tree changed, and exits 1 when one fails, printing the `--regress` command to run. It holds the proof marker while it runs (as `ship-gate.sh` does while it runs proofs), so the stop hook waits instead of testing a half-changed tree; a second run refuses while one is live. `--clear` removes the marker a run left when it died. |
-| `ship-gate.sh` | The only writer of `docs/done.md`. `ship-gate.sh <gate> --accepted "<owner's words>"` refuses unless the plan is that gate's, the red record is clear, and every proof passes now. It then writes the done entry with its checksum, removes the gate from the roadmap, and deletes the plan. `--regress <gate> --failed "<output>"` moves a shipped gate whose proof fails back to the top of the roadmap. `--demote <red-slug> --owner-said "<words>"` records, in its own commit, the owner's judgement that a red finding is not a real failure. `--retire-proof <gate> "<command>" --decision <slug> --owner-said "<words>"` removes one proof command from a shipped gate, citing a committed decision record that names every test file the command runs, filing the old entry, rewriting the checksum, and committing; it never retires a gate's last proof or one that fails now. |
+| `ship-gate.sh` | The only writer of `docs/done.md`. `ship-gate.sh <gate> --accepted "<owner's words>"` refuses unless the plan is that gate's, the red record is clear, and every proof passes now. It then writes the done entry with its checksum, removes the gate from the roadmap, files the plan verbatim as the decision source `plan-<gate>-<date>` (so a shipped gate's tasks, demo brief, and red record stay readable), and removes `docs/plan.md`. `--regress <gate> --failed "<output>"` moves a shipped gate whose proof fails back to the top of the roadmap. `--demote <red-slug> --owner-said "<words>"` records, in its own commit, the owner's judgement that a red finding is not a real failure. `--retire-proof <gate> "<command>" --decision <slug> --owner-said "<words>"` removes one proof command from a shipped gate, citing a committed decision record that names every test file the command runs, filing the old entry, rewriting the checksum, and committing; it never retires a gate's last proof or one that fails now. |
+| `next-step.sh` | What is next, and whether the owner is needed for it, read from the ledger: the gate, the step (`intake`, `draft`, `gate`, `ask`, `blocked`, `build`, `commit`, `red`, `red-commit`, `red-stop`, `red-lock`, `untracked`, `demo-brief`, `demo`, `tooling-fix`, `wait`), why, the command that takes it, and what to ask the owner. Exit 0 for a step that needs no owner, 2 when the owner is needed, 3 when nothing is left to run. `park "<question>"` records a question only the owner can answer as an "Ask first:" line at the top of the plan and commits it; `answer "<the owner's words>"` records their answer verbatim and commits it; `mark-brief` records the commit the demo brief was refreshed on, and the brief counts as fresh until a file outside `docs/` changes or appears. Only the plan's top block, before its first `## ` section, holds its tasks and parked questions, so a checklist in the demo brief is neither. |
+| `advance.sh` | The driver. Asks `next-step.sh`, runs the step in its own headless session (`claude -p`), and repeats until the owner is needed (exit 2), nothing is left (exit 0), or the ledger calls for a step this run already ran, a session failed, a draft session ended without saving, or `--max-steps` was reached (exit 1). `--dry-run` prints the first step and runs nothing. After a build or commit session, whether or not it ended well, it stops for the owner (exit 2), naming each thing, when the session changed what only the owner decides, compared with what was on disk when it started: the approved plan beyond ticking and parking a question, the red lane's record, a decision record, an open question, the glossary, the design, or the roadmap. It then runs nothing until started with `--reviewed`, which says the owner has read the change; that refusal is kept in the repository's shared `.git` folder, so it outlives a reboot and is the same whichever path reaches the project, and a dry run never clears it. A plan draft another session started and has not saved is reported with exit 0 and the command that drops it. `SB_CLAUDE_ARGS` holds extra arguments for every headless run: a headless session cannot answer a permission prompt, so say there how they are settled (for example `--permission-mode acceptEdits --permission-prompts none`). `SB_NOTIFY`, when set, is a command run when it stops for the owner, with `SB_GATE`, `SB_STEP`, and `SB_ASK` in its environment; unset, the stop is only printed. Each session's output is kept as its own log in the temp folder, named for the run and the step. |
 | `red-status.sh` | Whether the red lane's record lets the gate ship (see below). `--record` checks only that an uncommitted record is well formed, since a committed run can never be corrected. It remembers its verdict for the exact tree (commit, plan, and uncommitted files), so a second ask on an unchanged tree does not re-run every reproduce command; `--fresh` re-runs, and ship-gate always passes it. |
 | `red-pack.sh` | The breaker's context pack, generated: the files changed since the plan, the full changed source in a lane's slice, and the test fixtures it can reuse. `--out PATH` writes it to a file outside the project. |
 | `red-brief.sh` | The breaker's whole brief, generated into a folder outside the project with its pack beside it, so the agent is briefed with one line ("Read <brief> and follow it") instead of a retyped pack: the gate, what counts as a finding (the project's threat model, copied in; it refuses while `threat_model` names nothing it can read), the attack order (the acceptance sentence's surface first, Supporting items after), the minimum, the run's mode (`--delta`, `--partial`), the lane, and the report form red-file.sh reads. |
@@ -231,7 +261,8 @@ claude_outputs/README.md      the inbox; .gitignore gains lines so it, agent wor
 In a repository that already has a CLAUDE.md, the file keeps everything it had and gains this
 project's section at its end, marked with `<!-- serial-build -->` so it is added only once. The
 harness's rules sit in their own file, so they apply either way. `docs/plan.md` does not exist
-until `/serial-build:gate` writes it, and shipping deletes it; there is only ever one active plan.
+until `/serial-build:gate` writes it. Shipping files it verbatim under the decision sources, as
+`plan-<gate>-<date>`, and removes it; there is only ever one active plan.
 A draft of the next one may wait on a `serial-build/draft-<gate>` branch, outside the project.
 
 ## The red lane
@@ -299,19 +330,23 @@ whose goal was to make things fail, found sixteen problems.
 
 The failing tests are committed on purpose, which means continuous integration and any
 pre-commit test hook will fail until the fix lands. Build each gate on its own branch if that
-matters; on the default branch, `/serial-build:red` asks before committing them. While a red test
+matters; on the default branch, `/serial-build:red` asks before committing them, and a headless
+run with nobody to ask commits them on a new branch, `gate/<gate-slug>`, and says so. While a red test
 fails, the stop hook points it out once per change to the code, not at every turn.
 
 ## Coupling and footprint
 
 - **In unrelated projects:** the hooks exit after checking one file does not exist. The skill and
   agent descriptions add about 900 tokens to every session's context (measured with
-  `claude plugin details`), which is the cost of being installed user-wide. Install with
+  `claude plugin details` at 0.5.0; since 0.6.0 the handoff skill's description is listed too,
+  because a session may now start it, and the figure has not been measured again), which is
+  the cost of being installed user-wide. Install with
   `--scope project` to avoid it elsewhere.
 - **Into your project:** only what `/serial-build:scope` shows you and you approve, plus the
   hooks' behaviour, which the config states. Nothing reads another system's data. The plugin
-  makes no network calls and no model calls of its own; the two agents run only when a skill
-  launches them. `/serial-build:red` has Claude Code create a git worktree under
+  makes no network calls, and no model calls of its own with one exception the owner starts:
+  the driver (`advance.sh`) runs one headless Claude Code session per step until it needs the
+  owner. Nothing runs on a timer. Its agents run only when a skill launches them. `/serial-build:red` has Claude Code create a git worktree under
   `.claude/worktrees/` and removes it afterwards. The scripts that record a demotion or re-pin
   make their own git commits, because those commits are what the red-status check trusts.
 - **Machine requirements:** `sh`, `awk`, `cksum`, `find`, `grep`, and `sed`, which ship with

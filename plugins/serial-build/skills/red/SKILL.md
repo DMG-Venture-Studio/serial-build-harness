@@ -234,7 +234,10 @@ The record counts only once committed. Commit the imported tests, the raw output
 Red section as "Red: <gate-slug>, <n> findings". The tests are committed failing, on purpose, so:
 if the gate is being built on its own branch, commit there. If the work is on the default branch,
 say before committing that continuous integration and any pre-commit test hook will fail until
-the fixes land, and ask the owner whether to commit now or on a new branch for the gate.
+the fixes land, and ask the owner whether to commit now or on a new branch for the gate. With no
+owner to ask (a headless run, such as one the driver started), never commit failing tests to the
+default branch: create the branch `gate/<gate-slug>` from where you stand, commit there, and say
+so in the report's first line, so the owner learns where the gate's work now lives.
 
 Run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/red-status.sh" --record` before this commit, never after:
 a committed run cannot be corrected. After committing, run
@@ -317,6 +320,7 @@ Consequence first, to the owner: how many runs and attacks, what broke and what 
 meant for a user, each kind and how it was fixed, and what the loop cost. Quote the last line of
 `red-status.sh`: the gate cannot hand off until it says clear.
 
-End with the next command, to run after `/clear` or in a new session: when the loop ended clean,
-"next: `/clear`, then `/serial-build:demo-brief`"; when it stopped for the owner, what it needs
-from them.
+When the loop ended clean, the next step is the demo brief's refresh, and the owner does not
+type it: run `/serial-build:demo-brief` now, in this session. This session holds only paths and
+verdicts, never the code, so the refresh is cheap here. When the loop stopped for the owner, end
+with what it needs from them.

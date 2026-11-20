@@ -30,9 +30,15 @@ if [ -f "$plan" ]; then
   if grep -q '^Ask first' "$plan" 2>/dev/null; then
     printf 'serial-build: docs/plan.md opens with an "Ask first" line; ask the product owner before any other work.\n'
   fi
+  printf 'serial-build: for the exact next step and whether the owner is needed, run: sh "%s/scripts/next-step.sh"\n' "$SB_PLUGIN"
 elif [ -f "$roadmap" ]; then
-  gate=$(awk '/^### /{print substr($0, 5); exit}' "$roadmap")
-  later=$(awk '/^- [a-z0-9][a-z0-9-]*: / { sub(/^- /, ""); sub(/:.*/, ""); print; exit }' "$roadmap")
+  # Gates end where the tooling fixes begin, and a one-line gate is a bullet of
+  # a stage's "Later:" list: a tooling fix is written as the same kind of bullet.
+  gate=$(awk '/^## Tooling fixes/ { skip = 1; next } /^## / { skip = 0 } !skip && /^### / { print substr($0, 5); exit }' "$roadmap")
+  later=$(awk '/^## Tooling fixes/ { skip = 1; next } /^## / { skip = 0 } skip { next }
+    { t = tolower($0); gsub(/^[ \t*]+/, "", t) }
+    t ~ /^later[ \t]*(\([^)]*\))?[ \t]*:/ { on = 1; next } /^#/ { on = 0 }
+    on && /^- [a-z0-9][a-z0-9-]*: / { sub(/^- /, ""); sub(/:.*/, ""); print; exit }' "$roadmap")
   if [ -n "$gate" ]; then
     printf 'serial-build: no active plan. The next roadmap gate is %s; plan it with /serial-build:gate.\n' "$gate"
   elif [ -n "$later" ]; then

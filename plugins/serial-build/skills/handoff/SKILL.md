@@ -1,8 +1,7 @@
 ---
 name: handoff
-description: Close a session so a fresh agent picks up the work at once. Re-runs every proof in docs/done.md, refuses to move a gate while a red finding still reproduces, moves an accepted gate to done, and records state in the gate ledger. Use at the end of a working session or when the product owner has accepted a gate.
+description: Close a session so a fresh agent picks up the work at once. Re-runs every proof in docs/done.md, refuses to move a gate while a red finding still reproduces, moves an accepted gate to done, and records state in the gate ledger. Use when the product owner has said a gate's acceptance sentence, or when they ask to close the session. Never start it from a session nobody is watching, such as an unattended build.
 argument-hint: What the next session will be used for
-disable-model-invocation: true
 ---
 
 Focus for the next session: "$ARGUMENTS" (empty means continue the current work).
@@ -52,7 +51,10 @@ re-pinned only through `/serial-build:red`). Say which, in one line, consequence
 ## 3. Ship or record state
 
 - **Ship the gate only when the owner ran its demo on the running product this session,
-  including its break step, and said its acceptance sentence.** Then run:
+  including its break step, and said its acceptance sentence.** A session may start this skill
+  itself the moment the owner says the sentence (`/serial-build:demo-brief` does, so the owner
+  never types the command), and never on anything else: not a report, a test, a green check, or
+  its own reading of what they meant. Then run:
 
   ```
   sh "${CLAUDE_PLUGIN_ROOT}/scripts/ship-gate.sh" <gate-slug> --accepted "<the owner's words, verbatim>"
@@ -61,7 +63,9 @@ re-pinned only through `/serial-build:red`). Say which, in one line, consequence
   The script decides, not you: it refuses unless the red record is clear and every proof in the
   plan passes now. On success it writes the done entry (date, proof commands plus each red
   finding's reproduce command, what the red lane tried, the owner's words), removes the gate from
-  the roadmap, deletes `docs/plan.md`, lists unticked tasks, and runs the canon check. File each
+  the roadmap, lists unticked tasks, files the plan verbatim as the decision source
+  `plan-<gate-slug>-<date>` (so a shipped gate's tasks, demo brief and red record stay readable),
+  removes `docs/plan.md`, and runs the canon check. File each
   still-relevant unticked task as a roadmap gate through `/serial-build:intake`, and fix any FAIL.
   If it refuses, quote why and stop; never work around it. It exits 0 once the gate has shipped,
   even if the canon check it runs afterwards fails; never run it twice for one gate.
@@ -82,7 +86,10 @@ The next action is implicit: `docs/plan.md` if it exists, else `/serial-build:ga
 written-out roadmap gate (or `/serial-build:intake` to write out the next one-line gate). Say
 which in one line, as the command to run after `/clear` or in a new session, for example "next:
 `/clear`, then `/serial-build:gate`". The ledger holds everything a cold start needs, so the next
-session never inherits this one's context. Other plugins also ship a skill named handoff; always
+session never inherits this one's context. `sh "${CLAUDE_PLUGIN_ROOT}/scripts/next-step.sh"` reads
+the same ledger and prints the step and whether the owner is needed; and once a plan is approved,
+the owner can start the driver with `/serial-build:advance`, which runs every step that needs no
+owner, each in a fresh headless session, and stops when it needs them. Other plugins also ship a skill named handoff; always
 name this one in full, `/serial-build:handoff`, when telling the owner what to run.
 
 When a gate shipped and the next written-out roadmap gate has no draft
@@ -104,7 +111,8 @@ When a gate shipped and `docs/roadmap.md` has items under `## Tooling fixes`, or
 `serial-build/tooling-fix` waits to merge, name `/serial-build:tooling-fix` too: with no gate
 active it can merge now.
 
-Never launch a background session that builds; the owner supervises building.
+Never launch a background session that builds. Building runs unattended only under the driver,
+which the owner starts (`/serial-build:advance`).
 
 ## What stays out
 

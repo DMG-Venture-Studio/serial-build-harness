@@ -10,8 +10,11 @@
 #     (red-status.sh); the plan has a Proof block or a Manual: line; every proof
 #     command passes now; and the owner's words are given. Then it appends the
 #     done entry (date, proof commands plus each red finding's reproduce command,
-#     what the red lane tried, the owner's words), removes the gate from
-#     docs/roadmap.md, lists the plan's unticked tasks, and deletes docs/plan.md.
+#     what the red lane tried, where the plan is filed, the owner's words),
+#     removes the gate from docs/roadmap.md, lists the plan's unticked tasks, files
+#     the plan verbatim as the decision source plan-<gate-slug>-<date> (so the
+#     tasks, the demo brief, and the red record of a shipped gate stay readable),
+#     and removes docs/plan.md, since there is only ever one active plan.
 #
 #   ship-gate.sh --demote <red-slug> --owner-said "<the owner's words, verbatim>"
 #     Records that the owner judged a red finding not to be a real failure (the
@@ -278,6 +281,10 @@ guarded=$(rows FIND | awk -F '\t' '!seen[$3]++ { b = $6; sub(/^- red-[a-z0-9-]*:
   | while IFS= read -r g; do is_demoted "${g%% *}" || printf '%s\n' "$g"; done | join)
 demoted=$(rows DEMOTE | cut -f 3 | sed 's/^Demoted //' | join)
 
+# The plan outlives the ship as a decision source, named here so the entry can cite it.
+plansrc="plan-$slug-$today" k=1
+while [ -e "docs/decisions/sources/$plansrc.md" ]; do k=$((k + 1)); plansrc="plan-$slug-$today-$k"; done
+
 {
   printf '## %s\n\nDate: %s\n\n' "$slug" "$today"
   if [ -n "$all" ]; then
@@ -292,7 +299,8 @@ demoted=$(rows DEMOTE | cut -f 3 | sed 's/^Demoted //' | join)
   [ -n "$costs" ] && printf 'red lane cost: %s; ' "$costs"
   if [ -n "$guarded" ]; then printf 'findings now guarded by the proof above: %s' "$guarded"; else printf 'none found'; fi
   [ -n "$demoted" ] && printf '; demoted by the owner: %s' "$demoted"
-  printf '.\n\nAccepted: "%s"\n' "$accepted"
+  printf '.\n\nPlan: the plan as shipped is filed as the decision source `%s`.\n' "$plansrc"
+  printf '\nAccepted: "%s"\n' "$accepted"
 } > "$entryf"
 sum=$(cksum < "$entryf" | awk '{print $1 "-" $2}')
 {
@@ -303,9 +311,16 @@ sum=$(cksum < "$entryf" | awk '{print $1 "-" $2}')
 } >> "$done"
 
 remove_section "$roadmap" "###" "$slug"
-unticked=$(grep '^- \[ \]' "$plan")
-rm -f "$plan"
-echo "ship-gate: $slug moved to docs/done.md; docs/plan.md deleted."
+# The red task is the red lane's, and its record is what just let the gate ship.
+unticked=$(awk '/^## / { exit } /^- \[ \]/' "$plan" | grep -v 'serial-build:red')
+mkdir -p docs/decisions/sources
+if { printf '# Source: the plan for %s, as shipped\n\nFiled %s by ship-gate.sh when the gate shipped. The plan as it stood, verbatim: its tasks, its demo brief, and the red lane'"'"'s record.\n\n---\n\n' "$slug" "$today"
+     cat "$plan"; } > "docs/decisions/sources/$plansrc.md"; then
+  rm -f "$plan"
+  echo "ship-gate: $slug moved to docs/done.md; its plan is filed as the decision source $plansrc, and docs/plan.md is removed."
+else
+  echo "ship-gate: warning: $slug moved to docs/done.md, but its plan could not be filed as docs/decisions/sources/$plansrc.md, so docs/plan.md is left in place; file it there by hand, then remove it."
+fi
 if [ -n "$unticked" ]; then
   printf 'ship-gate: these tasks were not ticked; file each still-relevant one as a roadmap gate through /serial-build:intake:\n%s\n' "$unticked"
 fi
